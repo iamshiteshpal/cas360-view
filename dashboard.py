@@ -687,9 +687,7 @@ def parse_cas_pdf(pdf_bytes, password):
 def process_cas_data(cas_data):
     cas_data = to_dict(cas_data)
     summary = {
-        "investor_name": "Investor",
-        "investor_email": "",
-        "investor_pan": "—",
+        "investor_name": "Investor", "investor_email": "", "investor_pan": "—",
         "total_wealth": 0.0, "total_invested": 0.0, "current_gain": 0.0,
         "statement_date_raw": str(datetime.today().date()),
         "allocation_percentages": {}, "allocation_values": {},
@@ -698,22 +696,19 @@ def process_cas_data(cas_data):
         "scheme_aggregates": {}, "duplicate_sip_alerts": [],
         "redeemed_schemes": [], "total_realized_profit": 0.0
     }
-
     info = cas_data.get("investor_info", {})
     summary["investor_name"] = info.get("name", "Investor")
     summary["investor_email"] = info.get("email", "")
     summary["investor_pan"] = info.get("pan", "—")
-
     rv, rc, type_map, flat, tx_map, agg, redemptions = 0.0, 0.0, {}, [], {}, {}, []
 
     for folio in cas_data.get("folios", []):
         for scheme in folio.get("schemes", []):
-            val   = scheme.get("valuation", {})
+            val = scheme.get("valuation", {})
             sname = scheme.get("scheme", "Unknown")
-            v_date= val.get("date", summary["statement_date_raw"])
+            v_date = val.get("date", summary["statement_date_raw"])
             summary["statement_date_raw"] = str(v_date)
-            cost_v= float(val.get("cost", 0.0))
-            cur_v = float(val.get("value", 0.0))
+            cost_v, cur_v = float(val.get("cost", 0.0)), float(val.get("value", 0.0))
             units = float(scheme.get("close", 0.0))
             raw_t = scheme.get("type", "EQUITY")
             atype = "Equity Funds" if raw_t == "EQUITY" else "Debt Funds"
@@ -729,94 +724,43 @@ def process_cas_data(cas_data):
                         t_date = to_date_obj(tx.get("date"))
                         historical_dates.append(t_date)
                     except: pass
-                    
                     amt = abs(float(tx.get("amount", 0.0)))
-                    t_type = str(tx.get("type", "")).upper()
-                    t_desc = str(tx.get("description", "")).upper()
-                    
-                    if "PURCHASE" in t_type or "REINVEST" in t_type or "SIP" in t_desc or "STP-IN" in t_desc:
-                        tot_inv_scheme += amt
-                    elif "REDEMPTION" in t_type or "PAYOUT" in t_type or "WITHDRAWAL" in t_desc or "STP-OUT" in t_desc:
-                        tot_red_scheme += amt
-
+                    t_type, t_desc = str(tx.get("type", "")).upper(), str(tx.get("description", "")).upper()
+                    if any(k in t_type or k in t_desc for k in ["PURCHASE", "REINVEST", "SIP", "STP-IN"]): tot_inv_scheme += amt
+                    elif any(k in t_type or k in t_desc for k in ["REDEMPTION", "PAYOUT", "WITHDRAWAL", "STP-OUT"]): tot_red_scheme += amt
                     if "REDEMPTION" in t_type or "REDEMPTION" in t_desc:
                         try:
                             rd = to_date_obj(tx.get("date"))
-                            ru = abs(float(tx.get("units", 0.0)))
-                            redemptions.append({
-                                "date_obj": rd, "Date": rd.strftime("%d %b %Y"),
-                                "Scheme": clean_fund_name(sname),
-                                "Payout": f"₹{amt:,.2f}", "Units": f"{ru:.3f}"
-                            })
+                            redemptions.append({"date_obj": rd, "Date": rd.strftime("%d %b %Y"), "Scheme": clean_fund_name(sname), "Payout": f"₹{amt:,.2f}"})
                         except: pass
 
             if units < 0.001 and tot_inv_scheme > 0 and tot_red_scheme > 0:
                 profit = tot_red_scheme - tot_inv_scheme
-                duration_window = "Unknown Timeline Horizon"
-                if historical_dates:
-                    sorted_timeline = sorted(historical_dates)
-                    duration_window = f"{sorted_timeline[0].strftime('%b %Y')} - {sorted_timeline[-1].strftime('%b %Y')}"
-                
-                summary["redeemed_schemes"].append({
-                    "Scheme": sname,
-                    "Holding Period": duration_window,
-                    "Invested": tot_inv_scheme,
-                    "Redeemed": tot_red_scheme,
-                    "Profit": profit
-                })
+                summary["redeemed_schemes"].append({"Scheme": sname, "Holding Period": "Closed", "Invested": tot_inv_scheme, "Redeemed": tot_red_scheme, "Profit": profit})
                 summary["total_realized_profit"] += profit
             else:
                 rc += cost_v; rv += cur_v
                 type_map[atype] = type_map.get(atype, 0.0) + cur_v
 
             agg[sname] = {"cost": cost_v, "units": units, "value": cur_v}
-            sxirr = calculate_scheme_xirr(txs, cur_v, v_date)
-            if cur_v > 0 or cost_v > 0:
-                flat.append({
-                    "scheme_name": sname, "invested_cost": cost_v,
-                    "current_value": cur_v, "net_gain": cur_v - cost_v,
-                    "xirr": sxirr, "asset_type": atype
-                })
+            flat.append({"scheme_name": sname, "invested_cost": cost_v, "current_value": cur_v, "net_gain": cur_v - cost_v, "xirr": calculate_scheme_xirr(txs, cur_v, v_date), "asset_type": atype})
 
-            sip_txs = [
-                t for t in txs if any(k in str(t.get("description","")).upper() for k in ["SIP", "SYSTEMATIC", "RECURRING", "AUTO-DEBIT"]) 
-                or str(t.get("type","")).upper() in ["PURCHASE_SIP", "PURCHASE"]
-            ]
+            # MASTER SIP FILTER
+            sip_txs = [t for t in txs if any(k in str(t.get("description","")).upper() or k in str(t.get("type","")).upper() 
+                      for k in ["SIP", "SYSTEMATIC", "RECURRING", "AUTO", "PURCHASE", "DEBIT", "E-DEBIT", "ECS"])]
+            
             if sip_txs:
-                days, cur_month = [], []
-                for tx in sip_txs:
-                    try:
-                        dt = to_date_obj(tx.get("date"))
-                        days.append(dt.day)
-                        now_date = datetime.now()
-                        if dt.year == now_date.year and dt.month == now_date.month - 1:
-                            cur_month.append(dt.strftime("%d-%b"))
-                    except: pass
-                if len(cur_month) > 1:
-                    summary["duplicate_sip_alerts"].append({
-                        "scheme": sname, "count": len(cur_month), "dates": ", ".join(cur_month)
-                    })
+                days = [to_date_obj(tx.get("date")).day for tx in sip_txs]
                 dom = Counter(days).most_common(1)[0][0] if days else 1
-                latest = sorted(sip_txs, key=lambda x: str(x.get("date","")))[-1]
+                sorted_txs = sorted(sip_txs, key=lambda x: to_date_obj(x.get("date")))
+                latest = sorted_txs[-1]
                 amt = float(latest.get("amount", 0.0))
                 if amt > 0:
                     last_dt = to_date_obj(latest.get("date"))
-                    now = datetime.now()
-                    next_month = now.month + 1 if now.month < 12 else 1
-                    next_year  = now.year if now.month < 12 else now.year + 1
-                    try: next_due = datetime(next_year, next_month, dom, 10, 0, 0)
-                    except: next_due = datetime(next_year, next_month, 28, 10, 0, 0)
-                    sfx = "th" if 11<=dom<=13 else {1:"st",2:"nd",3:"rd"}.get(dom%10,"th")
-                    rec = {
-                        "Scheme Name": sname, "Amount": amt,
-                        "Trigger": f"{dom}{sfx}", "Last Installment": last_dt.strftime("%d %b %Y"),
-                        "Next Due": next_due.strftime("%d %b %Y"),
-                        "Next Due Iso": next_due.isoformat(), "Status": "Live"
-                    }
-                    
                     statement_date = to_date_obj(v_date)
-                    cutoff = statement_date - __import__('datetime').timedelta(days=60)
-                    
+                    cutoff = statement_date - __import__('datetime').timedelta(days=90)
+                    rec = {"Scheme Name": sname, "Amount": amt, "Trigger": f"{dom}{'th' if 11<=dom<=13 else {1:'st',2:'nd',3:'rd'}.get(dom%10,'th')}", 
+                           "Last Installment": last_dt.strftime("%d %b %Y"), "Next Due": "Pending", "Status": "Live"}
                     if last_dt >= cutoff and units > 0.01:
                         rec["Status"] = "Live"
                         summary["live_sips"].append(rec)
@@ -824,15 +768,8 @@ def process_cas_data(cas_data):
                         rec["Status"] = "Inactive"
                         summary["inactive_sips"].append(rec)
 
-    summary.update({
-        "total_wealth": rv, "total_invested": rc, "current_gain": rv - rc,
-        "allocation_values": type_map, "raw_scheme_transactions": tx_map,
-        "scheme_aggregates": agg,
-        "recent_redemptions": sorted(redemptions, key=lambda x: x["date_obj"], reverse=True),
-        "flat_schemes": flat
-    })
-    if rv > 0:
-        summary["allocation_percentages"] = {k: (v/rv)*100 for k,v in type_map.items()}
+    summary.update({"total_wealth": rv, "total_invested": rc, "current_gain": rv - rc, "allocation_values": type_map, "raw_scheme_transactions": tx_map, "scheme_aggregates": agg, "recent_redemptions": sorted(redemptions, key=lambda x: x["date_obj"], reverse=True), "flat_schemes": flat})
+    if rv > 0: summary["allocation_percentages"] = {k: (v/rv)*100 for k,v in type_map.items()}
     return summary
 
 # ── SESSION STATE INIT ────────────────────────────────────────────────────────
