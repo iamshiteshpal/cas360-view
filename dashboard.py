@@ -79,6 +79,9 @@ div[data-testid="stMetric"]::before {
     height: 1px;
     background: linear-gradient(90deg, transparent, rgba(167,139,250,0.6), transparent);
 }
+div[data-testid="stAppViewBlockContainer"] {
+    padding-top: 3rem !important;
+}
 div[data-testid="stMetricValue"] > div {
     font-family: 'JetBrains Mono', monospace !important;
     font-size: 22px !important;
@@ -775,7 +778,10 @@ def process_cas_data(cas_data):
                     "xirr": sxirr, "asset_type": atype
                 })
 
-            sip_txs = [t for t in txs if "SIP" in str(t.get("description","")).upper() or str(t.get("type","")).upper() == "PURCHASE_SIP"]
+            sip_txs = [
+                t for t in txs if any(k in str(t.get("description","")).upper() for k in ["SIP", "SYSTEMATIC", "RECURRING", "AUTO-DEBIT"]) 
+                or str(t.get("type","")).upper() in ["PURCHASE_SIP", "PURCHASE"]
+            ]
             if sip_txs:
                 days, cur_month = [], []
                 for tx in sip_txs:
@@ -1196,10 +1202,8 @@ elif menu == "SIP Center":
     live_l = live.get("live_sips", [])
     inactive_l = live.get("inactive_sips", [])
     
-    # Create the tab selection bar first
     tab = st.segmented_control("sip_tab", [f"🟢 Operational Stream ({len(live_l)})", f"🔴 Stale Commitments ({len(inactive_l)})"], default=f"🟢 Operational Stream ({len(live_l)})", label_visibility="collapsed")
     
-    # Core Fix: Dynamically switch the total calculation based on which tab is open
     if "Operational" in tab:
         target = live_l
         display_status = "COMMITMENT ACTIVE"
