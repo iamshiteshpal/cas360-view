@@ -1038,10 +1038,9 @@ if menu == "Dashboard":
             st.markdown('<div class="hud-card-title" style="margin-bottom:12px;">⏱ Systematic Operational Chronometer Ticker</div>', unsafe_allow_html=True)
             # Fix: Use .get() to prevent crash if "Next Due Iso" is missing
             sorted_sips = sorted(live["live_sips"], key=lambda x: x.get("Next Due Iso", "9999-12-31"))
-            if sorted_sips:
+           if sorted_sips:
                 ticker_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">'
-               for idx, s in enumerate(sorted_sips[:4]):
-                    # FIX: Use .get() to safely handle missing keys and prevent crashes
+                for idx, s in enumerate(sorted_sips[:4]):
                     sn = clean_fund_name(s.get("Scheme Name", "Unknown"))
                     iso = s.get("Next Due Iso", "9999-12-31")
                     did = f"t{idx}"
