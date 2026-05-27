@@ -502,9 +502,8 @@ def fetch_live_navs(holdings):
     latest_date = None
     for h in holdings:
         amfi = h.get("amfi")
-        if amfi: # If casparser found the AMFI code
+        if amfi: 
             try:
-                # Call the free API
                 r = requests.get(f"https://api.mfapi.in/mf/{amfi}", timeout=5)
                 if r.status_code == 200:
                     data = r.json().get("data", [])
@@ -613,15 +612,23 @@ def process(raw):
 
             pnl   = value - cost
             xirr_ = calc_xirr(txs, value, vdate)
+            
+            # Extract historical CAS NAV price safely
+            c_nav = float(val.get("nav", 0.0))
+            if c_nav == 0.0 and units > 0:
+                c_nav = value / units
+
             result["holdings"].append({
                 "scheme":   sname,
-                "amfi":     scheme.get("amfi"), # Added: Grab AMFI code
-                "units":    units,              # Added: Grab Units
+                "amfi":     scheme.get("amfi"), 
+                "units":    units,              
                 "invested": cost,
                 "value":    value,
                 "pnl":      pnl,
                 "xirr":     xirr_,
                 "category": cat,
+                "cas_nav":  c_nav,  # Added: Historical NAV tracker
+                "cas_date": vdate   # Added: Historical Date tracker
             })
 
             # ── SIP DETECTION ────────────────────────────────────────────────
@@ -687,8 +694,8 @@ for key, val in [
     ("show_email", True),
     ("pin_ok", False),
     ("switch_target", None),
-    ("live_data", {}),          # ADDED for live NAV feature
-    ("live_last_updated", None) # ADDED for live NAV feature
+    ("live_data", {}),          
+    ("live_last_updated", None) 
 ]:
     if key not in st.session_state:
         st.session_state[key] = val
@@ -905,7 +912,7 @@ if menu == "Dashboard":
             if sname in st.session_state.live_data:
                 new_wealth += st.session_state.live_data[sname]["live_value"]
             else:
-                new_wealth += h["value"] # Fallback to CAS if API failed for this fund
+                new_wealth += h["value"] 
         display_wealth = new_wealth
 
     display_pnl = display_wealth - d["total_invested"]
@@ -1161,9 +1168,19 @@ elif menu == "My Portfolio":
             live_val = cas_val
             badge = ""
             
-            # If we pulled live data for this specific fund, use it!
+            # Default tracking values (from parsed PDF statement)
+            show_nav = s.get("cas_nav", 0.0)
+            show_date = s.get("cas_date", "—")
+            try:
+                show_date = to_date(show_date).strftime("%d %b %Y")
+            except:
+                pass
+            
+            # Override with live tracking statistics if live data is currently pulled
             if st.session_state.live_data and sname in st.session_state.live_data:
                 live_val = st.session_state.live_data[sname]["live_value"]
+                show_nav = st.session_state.live_data[sname]["nav"]
+                show_date = st.session_state.live_data[sname]["date"]
                 badge = " 🟢"
 
             curr_pnl = live_val - s["invested"]
@@ -1173,6 +1190,8 @@ elif menu == "My Portfolio":
                 "Invested":      fmt_inr(s["invested"]),
                 "CAS Value":     fmt_inr(cas_val),
                 "Live Value":    fmt_inr(live_val) if badge else "—",
+                "NAV":           f"₹{show_nav:,.4f}" if show_nav else "—",
+                "NAV Date":      show_date,
                 "Current P&L":   (f"▲ {fmt_inr(curr_pnl)}" if curr_pnl >= 0 else f"▼ {fmt_inr(curr_pnl)}"),
                 "XIRR %":        f"{s['xirr']:.2f}%",
             })
