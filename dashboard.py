@@ -783,11 +783,17 @@ with st.sidebar:
                 elif len(pin) == 4:
                     st.error("Wrong PIN")
 
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+       st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         if st.button("＋ Add Another CAS", use_container_width=True):
             st.session_state.active = None
             st.session_state.pin_ok = False
             st.rerun()
+            
+        # ── NEW LOGOUT FEATURE ──
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        if st.button("🚪 Logout & Clear Data", use_container_width=True):
+            st.session_state.clear() # Completely wipes all uploaded CAS data from memory
+            st.rerun() # Forces the app to reload back to the upload screen
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:10px;color:#2d3748;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:8px;'>Export</div>", unsafe_allow_html=True)
