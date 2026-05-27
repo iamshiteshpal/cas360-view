@@ -26,7 +26,6 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap');
-
 :root {
   --bg:        #07090f;
   --bg2:       #0c0f1a;
@@ -93,7 +92,8 @@ div[data-testid="stMetricLabel"] > div {
   letter-spacing: 1.4px;
   font-weight: 500 !important;
 }
-div[data-testid="stMetricDelta"] > div { font-size: 11px !important; }
+div[data-testid="stMetricDelta"] > div { font-size: 11px !important;
+}
 
 /* containers */
 [data-testid="stVerticalBlockBorderWrapper"] > div > div {
@@ -120,7 +120,8 @@ div[data-testid="stMetricDelta"] > div { font-size: 11px !important; }
   border-radius: 8px !important;
   color: var(--text) !important;
 }
-[data-testid="stTextInput"] input { font-family: 'IBM Plex Mono', monospace !important; }
+[data-testid="stTextInput"] input { font-family: 'IBM Plex Mono', monospace !important;
+}
 
 /* file uploader */
 [data-testid="stFileUploader"] {
@@ -141,10 +142,12 @@ div[data-testid="stMetricDelta"] > div { font-size: 11px !important; }
   border-radius: 6px !important;
 }
 
-hr { border-color: var(--border) !important; }
+hr { border-color: var(--border) !important;
+}
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 4px;
+}
 
 /* ---------- utility classes ---------- */
 .card {
@@ -167,14 +170,17 @@ hr { border-color: var(--border) !important; }
 .pill-gain {
   display: inline-flex; align-items: center; gap: 4px;
   background: rgba(72,187,120,0.1); border: 1px solid rgba(72,187,120,0.25);
-  color: var(--gain); font-family: 'IBM Plex Mono',monospace;
+  color: var(--gain);
+  font-family: 'IBM Plex Mono',monospace;
   font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 20px;
 }
 .pill-loss {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center;
+  gap: 4px;
   background: rgba(252,129,129,0.1); border: 1px solid rgba(252,129,129,0.25);
   color: var(--loss); font-family: 'IBM Plex Mono',monospace;
-  font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 20px;
+  font-size: 11px; font-weight: 600;
+  padding: 2px 10px; border-radius: 20px;
 }
 .notice {
   background: rgba(99,179,237,0.05);
@@ -191,22 +197,26 @@ hr { border-color: var(--border) !important; }
   font-size: 10px; font-weight: 700; color: var(--faint);
   text-transform: uppercase; letter-spacing: 2px;
   margin: 24px 0 12px;
-  display: flex; align-items: center; gap: 10px;
+  display: flex;
+  align-items: center; gap: 10px;
 }
 .section-sep::after { content:''; flex:1; height:1px; background: var(--border); }
 .page-title {
   font-family: 'Syne', sans-serif;
-  font-size: 26px; font-weight: 800;
+  font-size: 26px;
+  font-weight: 800;
   color: #f7fafc; letter-spacing: -0.5px; margin-bottom: 4px;
 }
-.page-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+.page-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px;
+}
 .sip-card {
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 14px;
   margin-bottom: 8px;
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-between;
+  align-items: center;
 }
 .alloc-row {
   display: flex; align-items: center;
@@ -294,9 +304,8 @@ def next_due_date(dom: int) -> date:
     try:
         candidate = today.replace(day=dom)
     except ValueError:
-        candidate = today.replace(day=28)          # safe fallback for months with <31 days
+        candidate = today.replace(day=28)         
     if candidate <= today:
-        # advance one month
         m, y = today.month + 1, today.year
         if m > 12:
             m, y = 1, y + 1
@@ -563,7 +572,7 @@ def process(raw):
                         rd = to_date(tx.get("date"))
                         result["recent_redemptions"].append({
                             "date_obj": rd,
-                            "Date":   rd.strftime("%d %b %Y"),
+                            "Date": rd.strftime("%d %b %Y"),
                             "Scheme": clean_name(sname),
                             "Payout": amt,
                         })
@@ -783,17 +792,17 @@ with st.sidebar:
                 elif len(pin) == 4:
                     st.error("Wrong PIN")
 
-       st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         if st.button("＋ Add Another CAS", use_container_width=True):
             st.session_state.active = None
             st.session_state.pin_ok = False
             st.rerun()
-            
+
         # ── NEW LOGOUT FEATURE ──
         st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         if st.button("🚪 Logout & Clear Data", use_container_width=True):
-            st.session_state.clear() # Completely wipes all uploaded CAS data from memory
-            st.rerun() # Forces the app to reload back to the upload screen
+            st.session_state.clear()
+            st.rerun()
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:10px;color:#2d3748;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:8px;'>Export</div>", unsafe_allow_html=True)
@@ -843,7 +852,7 @@ if menu == "Dashboard":
       <span style="color:#63b3ed;font-size:16px;">◈</span>
       <div>
         <span style="color:#63b3ed;font-size:11px;font-weight:700;text-transform:uppercase;
-                     letter-spacing:1px;">Statement · {dp}</span><br>
+                    letter-spacing:1px;">Statement · {dp}</span><br>
         All figures are computed from your uploaded CAS statement.
       </div>
     </div>""", unsafe_allow_html=True)
@@ -986,7 +995,7 @@ if menu == "Dashboard":
                       <div style="font-size:11px;color:#718096;overflow:hidden;text-overflow:ellipsis;
                                   white-space:nowrap;margin-bottom:4px;" title="{sn}">{sn[:26]}…</div>
                       <div id="{did}" style="font-family:'IBM Plex Mono',monospace;font-size:12px;
-                                            font-weight:700;color:#63b3ed;">—</div>
+                                  font-weight:700;color:#63b3ed;">—</div>
                     </div>
                     <script>
                     (function(){{
