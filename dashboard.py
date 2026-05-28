@@ -959,22 +959,22 @@ def render_dashboard(data):
     pnl_pct = (display_pnl / data["total_invested"] * 100) if data["total_invested"] else 0.0
     sip_monthly = sum(s["amount"] for s in data["live_sips"])
 
-    # ── FIX: use fmt_inr_short so values never truncate in metric tiles ──
+    # ── Display full exact INR values for the main KPI tiles ──
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Total Wealth", fmt_inr_short(display_wealth))
+        st.metric("Total Wealth", fmt_inr(display_wealth))
     with m2:
-        st.metric("Invested", fmt_inr_short(data["total_invested"]))
+        st.metric("Invested", fmt_inr(data["total_invested"]))
     with m3:
         st.metric(
             "Unrealized P&L",
-            fmt_inr_short(display_pnl),
+            fmt_inr(display_pnl),
             delta=f"{gain_arrow(display_pnl)} {abs(pnl_pct):.2f}% all-time",
         )
     with m4:
         st.metric(
             "Monthly SIP",
-            fmt_inr_short(sip_monthly),
+            fmt_inr(sip_monthly),
             delta=f"{len(data['live_sips'])} active",
         )
 
