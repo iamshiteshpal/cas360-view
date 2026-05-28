@@ -87,7 +87,7 @@ def inject_global_styles():
         }
         div[data-testid="stMetricValue"] > div {
           font-family: 'IBM Plex Mono', monospace !important;
-          font-size: 20px !important;
+          font-size: 18px !important;
           font-weight: 600 !important;
           color: #f7fafc !important;
         }
@@ -1465,3 +1465,4 @@ def run_app():
     elif menu == "Alerts":
         render_alerts(active)
 
+run_app()
