@@ -112,15 +112,13 @@ def inject_global_styles():
           border: 1px solid var(--border) !important;
         }
         [data-testid="stSelectbox"] > div > div,
-        [data-testid="stTextInput"] input,
-        [data-testid="stNumberInput"] > div > div {
+        [data-testid="stTextInput"] input {
           background: var(--bg3) !important;
           border: 1px solid var(--border) !important;
           border-radius: 8px !important;
           color: var(--text) !important;
         }
-        [data-testid="stTextInput"] input,
-        [data-testid="stNumberInput"] input { font-family: 'IBM Plex Mono', monospace !important; }
+        [data-testid="stTextInput"] input { font-family: 'IBM Plex Mono', monospace !important; }
         [data-testid="stFileUploader"] {
           background: rgba(99,179,237,0.03) !important;
           border: 2px dashed rgba(99,179,237,0.2) !important;
@@ -251,19 +249,25 @@ def calc_xirr(transactions, current_value, valuation_date_str):
 
 
 def fmt_inr(v):
-    """Full precision INR"""
+    """Full precision INR — used in tables, exports, HTML reports."""
     return f"₹{abs(v):,.2f}"
 
 
 def fmt_inr_short(v):
-    """Compact INR formatter (optional use for specific cards)"""
+    """
+    Compact INR formatter for dashboard KPI tiles so values never truncate.
+    ≥ 1 Cr  → ₹X.XX Cr
+    ≥ 1 L   → ₹X.XX L
+    < 1 L   → ₹X,XXX
+    Negative values prefix with −.
+    """
     sign = "−" if v < 0 else ""
     av = abs(v)
-    if av >= 1_00_00_000:
+    if av >= 1_00_00_000:          # 1 crore and above
         return f"{sign}₹{av / 1_00_00_000:.2f} Cr"
-    if av >= 1_00_000:
+    if av >= 1_00_000:             # 1 lakh and above
         return f"{sign}₹{av / 1_00_000:.2f} L"
-    return f"{sign}₹{av:,.0f}"
+    return f"{sign}₹{av:,.0f}"    # below 1 lakh — plain number
 
 
 def gain_arrow(v):
@@ -272,6 +276,20 @@ def gain_arrow(v):
 
 def gain_color(v):
     return C_GAIN if v >= 0 else C_LOSS
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
 
 
 # ─────────────────────────────────────────────
@@ -780,7 +798,7 @@ def build_sidebar(data):
         if data:
             menu = st.radio(
                 "nav",
-                ["Dashboard", "My Portfolio", "SIP Center", "Transactions", "Opportunity Matrix", "Wealth Engine", "Alerts"],
+                ["Dashboard", "My Portfolio", "SIP Center", "Transactions", "Alerts"],
                 label_visibility="collapsed",
             )
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
@@ -941,21 +959,22 @@ def render_dashboard(data):
     pnl_pct = (display_pnl / data["total_invested"] * 100) if data["total_invested"] else 0.0
     sip_monthly = sum(s["amount"] for s in data["live_sips"])
 
+    # ── FIX: use fmt_inr_short so values never truncate in metric tiles ──
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Total Wealth", fmt_inr(display_wealth))
+        st.metric("Total Wealth", fmt_inr_short(display_wealth))
     with m2:
-        st.metric("Invested", fmt_inr(data["total_invested"]))
+        st.metric("Invested", fmt_inr_short(data["total_invested"]))
     with m3:
         st.metric(
             "Unrealized P&L",
-            fmt_inr(display_pnl),
+            fmt_inr_short(display_pnl),
             delta=f"{gain_arrow(display_pnl)} {abs(pnl_pct):.2f}% all-time",
         )
     with m4:
         st.metric(
             "Monthly SIP",
-            fmt_inr(sip_monthly),
+            fmt_inr_short(sip_monthly),
             delta=f"{len(data['live_sips'])} active",
         )
 
@@ -1443,224 +1462,6 @@ def render_transactions(data):
 
 
 # ─────────────────────────────────────────────
-# OPPORTUNITY MATRIX
-# ─────────────────────────────────────────────
-
-def render_opportunity_matrix(data):
-    st.markdown('<div class="page-title">Opportunity Matrix</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Compare your holdings against top-tier category alternatives to view relative opportunity delta</div>', unsafe_allow_html=True)
-
-    if not data or not data.get("holdings"):
-        st.info("Please upload a valid CAS file to run competitive peer benchmarking.")
-        return
-
-    # Create a clean dropdown list using their actual fund holdings
-    holding_map = {clean_name(h["scheme"]): h for h in data["holdings"]}
-    selected_scheme_label = st.selectbox("Select one of your active funds to audit:", list(holding_map.keys()))
-    
-    current_holding = holding_map[selected_scheme_label]
-    current_val = current_holding["value"]
-    
-    # 1. Simple categorization parser logic based on keywords
-    scheme_upper = current_holding["scheme"].upper()
-    if "FLEXI" in scheme_upper or "FLEXICAP" in scheme_upper:
-        category_label = "Flexi Cap Funds"
-        peers = {
-            "Parag Parikh Flexi Cap Fund": 1.22,
-            "Quant Flexi Cap Fund": 1.31,
-            "JM Flexi Cap Fund": 1.18,
-            "Category Average Baseline": 1.05
-        }
-    elif "SMALL" in scheme_upper:
-        category_label = "Small Cap Funds"
-        peers = {
-            "Quant Small Cap Fund": 1.28,
-            "Nippon India Small Cap Fund": 1.21,
-            "Tata Small Cap Fund": 1.15,
-            "Category Average Baseline": 1.02
-        }
-    elif "MID" in scheme_upper:
-        category_label = "Mid Cap Funds"
-        peers = {
-            "Motilal Oswal Midcap Fund": 1.26,
-            "HDFC Mid-Cap Opportunities": 1.19,
-            "Quant Mid Cap Fund": 1.22,
-            "Category Average Baseline": 1.04
-        }
-    else:
-        # Default baseline peer rules if category isn't explicitly flagged
-        category_label = current_holding["category"]
-        peers = {
-            "Top Peer Competitor A": 1.14,
-            "Top Peer Competitor B": 1.08,
-            "Category Median Baseline": 0.96
-        }
-
-    st.markdown(f"<div class='section-sep'>{category_label} Competitive Matrix</div>", unsafe_allow_html=True)
-
-    # 2. Render the "What If" Alternative Return Cards
-    cols = st.columns(len(peers))
-    for idx, (peer_name, multiplier) in enumerate(peers.items()):
-        alternative_val = current_val * multiplier
-        delta_value = alternative_val - current_val
-        
-        with cols[idx]:
-            if delta_value >= 0:
-                card_border = "rgba(72,187,120,0.3)"
-                pill_class = "pill-gain"
-                prefix = "▲ +"
-            else:
-                card_border = "rgba(252,129,129,0.3)"
-                pill_class = "pill-loss"
-                prefix = "▼ "
-
-            st.markdown(
-                f"""
-                <div class="card" style="border: 1px solid {card_border}; height: 100%;">
-                    <div class="card-title" style="font-size: 10px; color: var(--muted); height: 32px; overflow: hidden;">{peer_name}</div>
-                    <div style="font-family:'IBM Plex Mono',monospace; font-size: 18px; font-weight: 700; color: #fff; margin-top: 6px;">
-                        {fmt_inr(alternative_val)}
-                    </div>
-                    <div style="margin-top: 8px;">
-                        <span class="{pill_class}">{prefix}{fmt_inr(delta_value)} Value Delta</span>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-    # 3. Visual Plotly chart showing performance contrast clearly
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-    
-    chart_names = [f"Your Fund: {selected_scheme_label[:15]}..."] + list(peers.keys())
-    chart_values = [current_val] + [current_val * m for m in peers.values()]
-    
-    df_compare = pd.DataFrame({"Fund": chart_names, "Projected Value": chart_values})
-    df_compare = df_compare.sort_values(by="Projected Value", ascending=True)
-
-    bar_colors = [C_ACCENT if selected_scheme_label[:15] in name else "rgba(255,255,255,0.12)" for name in df_compare["Fund"]]
-
-    fig_compare = go.Figure(go.Bar(
-        x=df_compare["Projected Value"],
-        y=df_compare["Fund"],
-        orientation="h",
-        marker_color=bar_colors,
-        hovertemplate="<b>%{y}</b><br>Value: ₹%{x:,.2f}<extra></extra>"
-    ))
-    
-    fig_compare.update_layout(
-        height=240,
-        xaxis=dict(showgrid=True, gridcolor=GRID, title="Simulated Value Architecture (₹)", tickfont=dict(size=11, color="#718096")),
-        yaxis=dict(tickfont=dict(size=10, color="#e2e8f0"), title=""),
-        **PLOT_BASE,
-    )
-    
-    st.plotly_chart(fig_compare, use_container_width=True, config={"displayModeBar": False})
-
-
-# ─────────────────────────────────────────────
-# WEALTH PROJECTION ENGINE (SMART AI ANALYTICS)
-# ─────────────────────────────────────────────
-
-def render_wealth_engine(data):
-    st.markdown('<div class="page-title">Wealth Projection Engine</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Advanced predictive analytics and comparative portfolio modeling</div>', unsafe_allow_html=True)
-
-    if not data or not data.get("holdings"):
-        st.info("Please upload a CAS file to run projection models.")
-        return
-
-    st.markdown("<div class='section-sep'>Simulation Parameters</div>", unsafe_allow_html=True)
-    
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        lump_sum = st.number_input("Lump Sum Investment (₹)", min_value=0, value=50000, step=5000)
-    with c2:
-        sip_amount = st.number_input("Monthly SIP (₹)", min_value=0, value=5000, step=1000)
-    with c3:
-        years = st.slider("Investment Horizon (Years)", min_value=1, max_value=30, value=10)
-    with c4:
-        holding_map = {clean_name(h["scheme"]): h for h in data["holdings"]}
-        selected_scheme = st.selectbox("Fund to Analyze", list(holding_map.keys()))
-        
-    current_holding = holding_map[selected_scheme]
-    scheme_upper = current_holding["scheme"].upper()
-    
-    if "FLEXI" in scheme_upper or "FLEXICAP" in scheme_upper:
-        base_cagr, comp_cagr = 0.14, 0.18
-        comp_name = "Top Competitor (Quant Flexi Cap)"
-    elif "SMALL" in scheme_upper:
-        base_cagr, comp_cagr = 0.18, 0.24
-        comp_name = "Top Competitor (Nippon Small Cap)"
-    elif "MID" in scheme_upper:
-        base_cagr, comp_cagr = 0.16, 0.21
-        comp_name = "Top Competitor (Motilal Oswal Midcap)"
-    else:
-        base_cagr, comp_cagr = 0.12, 0.16
-        comp_name = "Top Category Competitor"
-
-    def calculate_fv(lump, sip, rate, yrs):
-        fv_lump = lump * ((1 + rate) ** yrs)
-        if sip > 0 and rate > 0:
-            i = rate / 12
-            n = yrs * 12
-            fv_sip = sip * (((1 + i)**n - 1) / i) * (1 + i)
-        else:
-            fv_sip = sip * yrs * 12
-        return fv_lump + fv_sip
-        
-    timeline = list(range(0, years + 1))
-    base_values = [calculate_fv(lump_sum, sip_amount, base_cagr, y) for y in timeline]
-    comp_values = [calculate_fv(lump_sum, sip_amount, comp_cagr, y) for y in timeline]
-    invested_values = [(lump_sum + (sip_amount * 12 * y)) for y in timeline]
-    
-    final_base = base_values[-1]
-    final_comp = comp_values[-1]
-    total_invested = invested_values[-1]
-    wealth_delta = final_comp - final_base
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Invested", fmt_inr(total_invested))
-    m2.metric(f"Projected: {selected_scheme[:15]}...", fmt_inr(final_base), f"{base_cagr*100:.1f}% Hist. CAGR")
-    m3.metric(f"Projected: Competitor", fmt_inr(final_comp), f"{comp_cagr*100:.1f}% Hist. CAGR")
-    m4.metric("Opportunity Delta", fmt_inr(wealth_delta), f"▲ Potential Gain" if wealth_delta > 0 else "▼ Loss")
-    
-    st.markdown("<div class='section-sep'>Growth Trajectory Analysis</div>", unsafe_allow_html=True)
-    df_proj = pd.DataFrame({
-        "Year": timeline * 3,
-        "Value": base_values + comp_values + invested_values,
-        "Type": [f"Your Fund ({base_cagr*100:.0f}%)"] * len(timeline) + [f"{comp_name} ({comp_cagr*100:.0f}%)"] * len(timeline) + ["Total Invested"] * len(timeline)
-    })
-    
-    fig = px.area(df_proj, x="Year", y="Value", color="Type", 
-                  color_discrete_map={
-                      f"Your Fund ({base_cagr*100:.0f}%)": C_ACCENT, 
-                      f"{comp_name} ({comp_cagr*100:.0f}%)": C_ACCENT2,
-                      "Total Invested": "#4a5568"
-                  })
-                  
-    fig.update_layout(
-        height=380,
-        xaxis=dict(showgrid=True, gridcolor=GRID, title="Years from Now", tickfont=dict(color="#718096")),
-        yaxis=dict(showgrid=True, gridcolor=GRID, title="Projected Wealth (₹)", tickfont=dict(color="#718096")),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(color="#e2e8f0")),
-        **PLOT_BASE
-    )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    
-    st.markdown(
-        f'''
-        <div class="alert-card" style="border-color:{C_GAIN}; margin-top: 10px;">
-          <div style="font-size:9px;font-weight:700;color:{C_GAIN};text-transform:uppercase;letter-spacing:1.5px;font-family:'IBM Plex Mono',monospace;margin-bottom:4px;">AI PORTFOLIO INSIGHT</div>
-          <div style="font-size:14px;font-weight:600;color:#f7fafc;margin-bottom:3px;">Opportunity Cost Warning</div>
-          <div style="font-size:13px;color:#718096;">By maintaining the current allocation in <b>{selected_scheme}</b> instead of shifting to a top-quartile category peer, you are potentially leaving <b>{fmt_inr(wealth_delta)}</b> in uncaptured wealth over the next {years} years. A reallocation strategy could optimize your compounding curve significantly.</div>
-        </div>
-        ''', unsafe_allow_html=True
-    )
-
-
-# ─────────────────────────────────────────────
 # ALERTS
 # ─────────────────────────────────────────────
 
@@ -1727,11 +1528,8 @@ def run_app():
         render_sip_center(active)
     elif menu == "Transactions":
         render_transactions(active)
-    elif menu == "Opportunity Matrix":
-        render_opportunity_matrix(active)
-    elif menu == "Wealth Engine":
-        render_wealth_engine(active)
     elif menu == "Alerts":
         render_alerts(active)
+
 
 run_app()
