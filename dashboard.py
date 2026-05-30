@@ -1682,11 +1682,368 @@ def render_dashboard(data):
             ]), use_container_width=True, hide_index=True)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # ── SIP VIEW ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    elif view_mode == "🔄 SIP":
+        all_tx    = data.get("special_transactions", [])
+        sip_txs   = [t for t in all_tx if t["Type"] == "SIP"]
+        sip_rev   = [t for t in all_tx if t["Type"] == "SIP Reversal"]
+        live_sips = data.get("live_sips", [])
+        dead_sips = data.get("dead_sips", [])
+
+        sip_by_scheme = {}
+        for t in sip_txs:
+            sip_by_scheme[t["Scheme"]] = sip_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
+
+        total_sip_invested = sum(sip_by_scheme.values())
+        total_sip_reversed = sum(t["Amount"] for t in sip_rev)
+        sip_monthly        = sum(s["amount"] for s in live_sips)
+        bounce_rate        = (len(sip_rev) / max(len(sip_txs), 1)) * 100
+
+        # ── Animated KPI row ──────────────────────────────────────────────────
+        sip_kpi = (
+            "<style>"
+            "@keyframes sIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}"
+            ".sk{background:#0c0f1a;border-radius:14px;padding:16px 18px;"
+            "animation:sIn .5s ease forwards;transition:border-color .25s,transform .2s;}"
+            ".sk:hover{transform:translateY(-3px);}"
+            ".slbl{font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.4px;font-weight:600;margin-bottom:8px;}"
+            ".sval{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;letter-spacing:-0.5px;}"
+            ".ssub{font-size:10px;color:#4a5568;margin-top:5px;}"
+            "</style>"
+            "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;'>"
+            f"<div class='sk' style='border:1px solid rgba(99,179,237,0.2);animation-delay:.0s;'>"
+            f"<div class='slbl'>Total SIP Invested</div>"
+            f"<div class='sval' style='color:#63b3ed;'>{fmt_inr(total_sip_invested)}</div>"
+            f"<div class='ssub'>{len(sip_by_scheme)} schemes</div></div>"
+            f"<div class='sk' style='border:1px solid rgba(72,187,120,0.2);animation-delay:.08s;'>"
+            f"<div class='slbl'>Monthly SIP</div>"
+            f"<div class='sval' style='color:#48bb78;'>{fmt_inr(sip_monthly)}</div>"
+            f"<div class='ssub'>{len(live_sips)} live · {len(dead_sips)} stopped</div></div>"
+            f"<div class='sk' style='border:1px solid rgba(246,173,85,0.2);animation-delay:.16s;'>"
+            f"<div class='slbl'>Stopped SIPs</div>"
+            f"<div class='sval' style='color:#f6ad55;'>{len(dead_sips)}</div>"
+            f"<div class='ssub'>Need reactivation</div></div>"
+            f"<div class='sk' style='border:1px solid rgba(252,129,129,0.2);animation-delay:.24s;'>"
+            f"<div class='slbl'>Bounce Rate</div>"
+            f"<div class='sval' style='color:{'#fc8181' if bounce_rate>5 else '#48bb78'};'>{bounce_rate:.1f}%</div>"
+            f"<div class='ssub'>{len(sip_rev)} bounces / {len(sip_txs)} total</div></div>"
+            "</div>"
+        )
+        components.html(sip_kpi, height=110, scrolling=False)
+
+        # ── Two charts side by side: Animated donut (SIP share) + Radial bar ──
+        cv1, cv2 = st.columns(2)
+
+        with cv1:
+            _dash_section("🍩 SIP Share by Scheme")
+            if sip_by_scheme:
+                import math
+                items   = sorted(sip_by_scheme.items(), key=lambda x: -x[1])[:8]
+                total_v = sum(v for _, v in items) or 1
+                colors  = ["#63b3ed","#9f7aea","#48bb78","#f6ad55","#fc8181","#4fd1c5","#ed8936","#fbb6ce"]
+                cx2, cy2, ro2, ri2 = 110, 110, 88, 54
+                segs = ""; legend = ""; ang = 0.0
+                for i, (lbl, val) in enumerate(items):
+                    pct  = val / total_v * 100
+                    col  = colors[i % len(colors)]
+                    sw   = (pct / 100) * 360 - 2.5
+                    if sw <= 0: ang += (pct/100)*360; continue
+                    sr   = math.radians(ang - 90)
+                    er   = math.radians(ang + sw - 90)
+                    x1o  = cx2 + ro2*math.cos(sr); y1o = cy2 + ro2*math.sin(sr)
+                    x2o  = cx2 + ro2*math.cos(er); y2o = cy2 + ro2*math.sin(er)
+                    x1i  = cx2 + ri2*math.cos(er); y1i = cy2 + ri2*math.sin(er)
+                    x2i  = cx2 + ri2*math.cos(sr); y2i = cy2 + ri2*math.sin(sr)
+                    lf   = 1 if sw > 180 else 0
+                    path = (f"M {x1o:.1f} {y1o:.1f} A {ro2} {ro2} 0 {lf} 1 {x2o:.1f} {y2o:.1f} "
+                            f"L {x1i:.1f} {y1i:.1f} A {ri2} {ri2} 0 {lf} 0 {x2i:.1f} {y2i:.1f} Z")
+                    segs += (f'<path d="{path}" fill="{col}" opacity="0" '
+                             f'style="animation:dIn .5s ease {i*0.12:.2f}s forwards;cursor:pointer;transition:filter .15s;" '
+                             f'onmouseover="this.style.filter=\'brightness(1.3)\'" onmouseout="this.style.filter=\'brightness(1)\'">'
+                             f'<title>{lbl}: {fmt_inr(val)} ({pct:.1f}%)</title></path>')
+                    short = lbl[:22] + "…" if len(lbl) > 22 else lbl
+                    legend += (f'<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+                               f'<div style="display:flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:{col};display:inline-block;"></span>'
+                               f'<span style="font-size:11px;color:#e2e8f0;">{short}</span></div>'
+                               f'<div style="text-align:right;"><div style="font-family:IBM Plex Mono,monospace;font-size:11px;font-weight:600;color:#f7fafc;">{fmt_inr(val)}</div>'
+                               f'<div style="font-size:10px;color:#4a5568;">{pct:.1f}%</div></div></div>')
+                    ang += (pct/100)*360
+                donut2 = (
+                    "<style>@keyframes dIn{from{opacity:0;transform:scale(.8);transform-origin:110px 110px;}"
+                    "to{opacity:1;transform:scale(1);transform-origin:110px 110px;}}"
+                    "@keyframes cF{from{opacity:0;}to{opacity:1;}}</style>"
+                    "<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:16px;'>"
+                    "<div style='display:flex;align-items:center;gap:14px;'>"
+                    f"<svg width='220' height='220' viewBox='0 0 220 220' style='flex-shrink:0;'>"
+                    f"{segs}"
+                    f"<circle cx='{cx2}' cy='{cy2}' r='{ri2-2}' fill='#07090f'/>"
+                    f"<text x='{cx2}' y='{cy2-6}' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:11px;font-weight:700;fill:#f7fafc;animation:cF 1s .6s forwards;opacity:0;'>{fmt_inr(total_sip_invested)}</text>"
+                    f"<text x='{cx2}' y='{cy2+10}' text-anchor='middle' style='font-size:9px;fill:#718096;animation:cF 1s .7s forwards;opacity:0;'>total SIP</text>"
+                    f"</svg><div style='flex:1;'>{legend}</div></div></div>"
+                )
+                components.html(donut2, height=260, scrolling=False)
+
+        with cv2:
+            _dash_section("📊 SIP Amount — Radial Progress Bars")
+            if sip_by_scheme:
+                items2  = sorted(sip_by_scheme.items(), key=lambda x: -x[1])[:6]
+                max_val = items2[0][1] if items2 else 1
+                colors2 = ["#63b3ed","#9f7aea","#48bb78","#f6ad55","#fc8181","#4fd1c5"]
+                bars_html = "<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:18px;'>"
+                for i, (lbl, val) in enumerate(items2):
+                    pct  = (val / max_val) * 100
+                    col  = colors2[i % len(colors2)]
+                    short = lbl[:28] + "…" if len(lbl) > 28 else lbl
+                    bars_html += (
+                        f"<div style='margin-bottom:14px;'>"
+                        f"<div style='display:flex;justify-content:space-between;margin-bottom:5px;'>"
+                        f"<span style='font-size:11px;color:#e2e8f0;font-weight:500;'>{short}</span>"
+                        f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;font-weight:700;color:{col};'>{fmt_inr(val)}</span></div>"
+                        f"<div style='background:#111627;border-radius:6px;height:8px;overflow:hidden;'>"
+                        f"<div style='height:100%;width:0%;background:linear-gradient(90deg,{col}88,{col});border-radius:6px;"
+                        f"animation:barW 1.2s cubic-bezier(.4,0,.2,1) {i*0.12:.2f}s forwards;'></div></div></div>"
+                    )
+                bars_html += "</div><style>@keyframes barW{from{width:0%;}to{width:" + f"{pct:.0f}%" + ";}}"
+                # generate per-bar animations with unique IDs
+                bars_html2 = "<style>@keyframes bw0{from{width:0}to{width:100%}}"
+                items2b = sorted(sip_by_scheme.items(), key=lambda x: -x[1])[:6]
+                max_v2  = items2b[0][1] if items2b else 1
+                inner = "<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:18px;'>"
+                for i, (lbl2, val2) in enumerate(items2b):
+                    p2   = (val2 / max_v2) * 100
+                    col2 = colors2[i % len(colors2)]
+                    s2   = lbl2[:28] + "…" if len(lbl2) > 28 else lbl2
+                    bars_html2 += f"@keyframes bw{i}{{from{{width:0%}}to{{width:{p2:.1f}%}}}}"
+                    inner += (f"<div style='margin-bottom:14px;'>"
+                              f"<div style='display:flex;justify-content:space-between;margin-bottom:5px;'>"
+                              f"<span style='font-size:11px;color:#e2e8f0;font-weight:500;'>{s2}</span>"
+                              f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;font-weight:700;color:{col2};'>{fmt_inr(val2)}</span></div>"
+                              f"<div style='background:#111627;border-radius:6px;height:8px;overflow:hidden;'>"
+                              f"<div style='height:100%;width:0%;background:linear-gradient(90deg,{col2}88,{col2});border-radius:6px;"
+                              f"animation:bw{i} 1.1s cubic-bezier(.4,0,.2,1) {i*0.14:.2f}s forwards;'></div></div></div>")
+                inner += "</div>"
+                bars_html2 += "</style>" + inner
+                components.html(bars_html2, height=260, scrolling=False)
+
+        # ── Live vs Stopped SIPs side by side ────────────────────────────────
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            _dash_section("✅ Live SIPs")
+            if live_sips:
+                for s in sorted(live_sips, key=lambda x: x["amount"], reverse=True):
+                    sn = clean_name(s["scheme"])
+                    st.markdown(
+                        f'<div style="background:#0c0f1a;border:1px solid rgba(72,187,120,0.2);border-radius:10px;'
+                        f'padding:12px 14px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div><div style="font-size:12px;color:#e2e8f0;font-weight:600;">{sn}</div>'
+                        f'<div style="font-size:10px;color:#718096;margin-top:3px;">📅 {s["day_label"]} every month · Next: {s["next_date"]}</div></div>'
+                        f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:#48bb78;">{fmt_inr(s["amount"])}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("No live SIPs.")
+
+        with sc2:
+            _dash_section("🔴 Stopped SIPs — Restart Candidates")
+            if dead_sips:
+                for s in dead_sips:
+                    sn = clean_name(s["scheme"])
+                    st.markdown(
+                        f'<div style="background:#0c0f1a;border:1px solid rgba(252,129,129,0.2);border-radius:10px;'
+                        f'padding:12px 14px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div><div style="font-size:12px;color:#e2e8f0;font-weight:600;">{sn}</div>'
+                        f'<div style="font-size:10px;color:#718096;margin-top:3px;">⚠️ Last: {s["last_date"]}</div></div>'
+                        f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:#fc8181;">{fmt_inr(s["amount"])}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown('<div style="color:#48bb78;font-size:13px;padding:12px 0;">🎉 All SIPs are active!</div>', unsafe_allow_html=True)
+
+        if sip_rev:
+            _dash_section("↩️ SIP Bounces / Reversals")
+            for t in sip_rev:
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid rgba(252,129,129,0.25);border-left:3px solid #fc8181;'
+                    f'border-radius:0 10px 10px 0;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">'
+                    f'<div><div style="font-size:12px;color:#e2e8f0;font-weight:500;">{t["Scheme"]}</div>'
+                    f'<div style="font-size:10px;color:#718096;margin-top:2px;">{t["Date"]} · {t.get("Description","")[:60]}</div></div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#fc8181;">{fmt_inr(t["Amount"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ── LUMPSUM VIEW ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    elif view_mode == "💰 Lumpsum":
+        all_tx = data.get("special_transactions", [])
+        ls_txs      = [t for t in all_tx if t["Type"] == "Lumpsum Purchase"]
+        redemptions = [t for t in all_tx if t["Type"] == "Redemption"]
+        red_rev     = [t for t in all_tx if t["Type"] == "Redemption Reversal"]
+
+        ls_by_scheme  = {}
+        for t in ls_txs:
+            ls_by_scheme[t["Scheme"]] = ls_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
+        red_by_scheme = {}
+        for t in redemptions:
+            red_by_scheme[t["Scheme"]] = red_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
+
+        total_ls       = sum(ls_by_scheme.values())
+        total_redeemed = sum(red_by_scheme.values())
+        net            = total_ls - total_redeemed
+        net_color      = "#48bb78" if net >= 0 else "#fc8181"
+
+        # ── Animated KPIs ────────────────────────────────────────────────────
+        lkpi = (
+            "<style>@keyframes lIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}"
+            ".lk{background:#0c0f1a;border-radius:14px;padding:16px 18px;animation:lIn .5s ease forwards;"
+            "transition:border-color .25s,transform .2s;}.lk:hover{transform:translateY(-3px);}"
+            ".ll{font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.4px;font-weight:600;margin-bottom:8px;}"
+            ".lv{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;letter-spacing:-.5px;}"
+            ".ls{font-size:10px;color:#4a5568;margin-top:5px;}</style>"
+            "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;'>"
+            f"<div class='lk' style='border:1px solid rgba(159,122,234,0.2);animation-delay:.0s;'>"
+            f"<div class='ll'>Total Lumpsum Invested</div>"
+            f"<div class='lv' style='color:#9f7aea;'>{fmt_inr(total_ls)}</div>"
+            f"<div class='ls'>{len(ls_by_scheme)} schemes · {len(ls_txs)} purchases</div></div>"
+            f"<div class='lk' style='border:1px solid rgba(252,129,129,0.2);animation-delay:.08s;'>"
+            f"<div class='ll'>Total Redeemed</div>"
+            f"<div class='lv' style='color:#fc8181;'>{fmt_inr(total_redeemed)}</div>"
+            f"<div class='ls'>{len(redemptions)} redemption events</div></div>"
+            f"<div class='lk' style='border:1px solid rgba({'72,187,120' if net>=0 else '252,129,129'},0.2);animation-delay:.16s;'>"
+            f"<div class='ll'>Net Deployed</div>"
+            f"<div class='lv' style='color:{net_color};'>{'▲' if net>=0 else '▼'} {fmt_inr(net)}</div>"
+            f"<div class='ls'>Invested minus redeemed</div></div>"
+            f"<div class='lk' style='border:1px solid rgba(246,173,85,0.2);animation-delay:.24s;'>"
+            f"<div class='ll'>Redemption Reversals</div>"
+            f"<div class='lv' style='color:#f6ad55;'>{len(red_rev)}</div>"
+            f"<div class='ls'>{fmt_inr(sum(t['Amount'] for t in red_rev))} reversed</div></div></div>"
+        )
+        components.html(lkpi, height=110, scrolling=False)
+
+        # ── Waterfall chart: Invested → Redeemed → Net ───────────────────────
+        if ls_by_scheme or red_by_scheme:
+            _dash_section("💧 Capital Flow Waterfall")
+            all_schemes = sorted(set(list(ls_by_scheme.keys()) + list(red_by_scheme.keys())))
+            wf_x, wf_y, wf_colors, wf_text = [], [], [], []
+            for s in all_schemes:
+                inv = ls_by_scheme.get(s, 0)
+                red = red_by_scheme.get(s, 0)
+                net_s = inv - red
+                short = clean_name(s)[:22] + "…" if len(clean_name(s)) > 22 else clean_name(s)
+                if inv > 0:
+                    wf_x.append(short + " IN"); wf_y.append(inv)
+                    wf_colors.append("#9f7aea"); wf_text.append(fmt_inr(inv))
+                if red > 0:
+                    wf_x.append(short + " OUT"); wf_y.append(-red)
+                    wf_colors.append("#fc8181"); wf_text.append(fmt_inr(red))
+            if wf_x:
+                fig_wf = go.Figure(go.Bar(
+                    x=wf_x, y=wf_y, marker_color=wf_colors,
+                    text=wf_text, textposition="outside",
+                    textfont=dict(size=10, color="#718096"),
+                ))
+                fig_wf.add_hline(y=0, line_color="rgba(255,255,255,0.1)", line_width=1)
+                fig_wf.update_layout(
+                    height=280, showlegend=False,
+                    xaxis=dict(tickfont=dict(size=10, color="#718096"), tickangle=-35),
+                    yaxis=dict(showgrid=True, gridcolor=GRID, zeroline=False,
+                               tickfont=dict(size=10, color="#718096")),
+                    **PLOT_BASE,
+                )
+                st.plotly_chart(fig_wf, use_container_width=True, config={"displayModeBar": False})
+
+        # ── Side by side: donut invested + donut redeemed ────────────────────
+        lc1, lc2 = st.columns(2)
+        import math
+
+        def _mini_donut(items_dict, title, colors_list, center_text):
+            items_d = sorted(items_dict.items(), key=lambda x: -x[1])[:7]
+            total_d = sum(v for _, v in items_d) or 1
+            cxd, cyd, rod, rid = 90, 90, 72, 44
+            segs_d = ""; leg_d = ""; ang_d = 0.0
+            for i, (lbl, val) in enumerate(items_d):
+                pct_d = val / total_d * 100
+                col_d = colors_list[i % len(colors_list)]
+                sw_d  = (pct_d/100)*360 - 2.5
+                if sw_d <= 0: ang_d += (pct_d/100)*360; continue
+                sr_d  = math.radians(ang_d - 90); er_d = math.radians(ang_d + sw_d - 90)
+                x1o_d = cxd+rod*math.cos(sr_d); y1o_d = cyd+rod*math.sin(sr_d)
+                x2o_d = cxd+rod*math.cos(er_d); y2o_d = cyd+rod*math.sin(er_d)
+                x1i_d = cxd+rid*math.cos(er_d); y1i_d = cyd+rid*math.sin(er_d)
+                x2i_d = cxd+rid*math.cos(sr_d); y2i_d = cyd+rid*math.sin(sr_d)
+                lf_d  = 1 if sw_d > 180 else 0
+                path_d = (f"M {x1o_d:.1f} {y1o_d:.1f} A {rod} {rod} 0 {lf_d} 1 {x2o_d:.1f} {y2o_d:.1f} "
+                          f"L {x1i_d:.1f} {y1i_d:.1f} A {rid} {rid} 0 {lf_d} 0 {x2i_d:.1f} {y2i_d:.1f} Z")
+                segs_d += (f'<path d="{path_d}" fill="{col_d}" opacity="0" '
+                           f'style="animation:mdIn .5s ease {i*0.1:.1f}s forwards;cursor:pointer;transition:filter .15s;" '
+                           f'onmouseover="this.style.filter=\'brightness(1.3)\'" onmouseout="this.style.filter=\'brightness(1)\'">'
+                           f'<title>{lbl}: {fmt_inr(val)} ({pct_d:.1f}%)</title></path>')
+                short_d = lbl[:20] + "…" if len(lbl) > 20 else lbl
+                leg_d  += (f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+                           f'<div style="display:flex;align-items:center;gap:5px;"><span style="width:7px;height:7px;border-radius:50%;background:{col_d};display:inline-block;"></span>'
+                           f'<span style="font-size:10px;color:#e2e8f0;">{short_d}</span></div>'
+                           f'<span style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#f7fafc;font-weight:600;">{fmt_inr(val)}</span></div>')
+                ang_d  += (pct_d/100)*360
+            return (
+                "<style>@keyframes mdIn{from{opacity:0;transform:scale(.75);transform-origin:90px 90px;}"
+                "to{opacity:1;transform:scale(1);transform-origin:90px 90px;}}"
+                "@keyframes mCF{from{opacity:0;}to{opacity:1;}}</style>"
+                f"<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:16px;'>"
+                f"<div style='font-size:11px;font-weight:700;color:#63b3ed;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;'>{title}</div>"
+                f"<div style='display:flex;align-items:center;gap:12px;'>"
+                f"<svg width='180' height='180' viewBox='0 0 180 180' style='flex-shrink:0;'>"
+                f"{segs_d}"
+                f"<circle cx='{cxd}' cy='{cyd}' r='{rid-2}' fill='#07090f'/>"
+                f"<text x='{cxd}' y='{cyd+4}' text-anchor='middle' style='font-size:9px;fill:#718096;animation:mCF 1s .5s forwards;opacity:0;'>{center_text}</text>"
+                f"</svg><div style='flex:1;'>{leg_d}</div></div></div>"
+            )
+
+        with lc1:
+            if ls_by_scheme:
+                inv_colors = ["#9f7aea","#63b3ed","#4fd1c5","#48bb78","#f6ad55","#fc8181","#ed8936"]
+                components.html(_mini_donut(ls_by_scheme, "🏆 Where You Invested", inv_colors, "Invested"), height=240, scrolling=False)
+        with lc2:
+            if red_by_scheme:
+                red_colors = ["#fc8181","#f6ad55","#ed8936","#fbb6ce","#742a2a","#fc8181","#fbd38d"]
+                components.html(_mini_donut(red_by_scheme, "🏦 Where You Redeemed From", red_colors, "Redeemed"), height=240, scrolling=False)
+
+        # ── Scheme cards: each lumpsum scheme as a card with invest/redeem bar ─
+        _dash_section("📋 Scheme-wise Breakdown")
+        if ls_by_scheme:
+            for scheme, inv_amt in sorted(ls_by_scheme.items(), key=lambda x: -x[1]):
+                red_amt = red_by_scheme.get(scheme, 0)
+                net_amt = inv_amt - red_amt
+                net_c   = "#48bb78" if net_amt >= 0 else "#fc8181"
+                bar_pct = min((red_amt / inv_amt * 100) if inv_amt else 0, 100)
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px 18px;margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
+                    f'<div style="font-size:13px;color:#e2e8f0;font-weight:600;">{clean_name(scheme)}</div>'
+                    f'<div style="text-align:right;"><span style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:{net_c};">Net: {fmt_inr(net_amt)}</span></div></div>'
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:10px;">'
+                    f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Invested</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:#9f7aea;">{fmt_inr(inv_amt)}</div></div>'
+                    f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Redeemed</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:#fc8181;">{fmt_inr(red_amt) if red_amt else "—"}</div></div>'
+                    f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Still Invested</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:{net_c};">{fmt_inr(max(net_amt,0))}</div></div></div>'
+                    f'<div style="background:#111627;border-radius:4px;height:4px;overflow:hidden;">'
+                    f'<div style="height:100%;width:{bar_pct:.1f}%;background:#fc8181;border-radius:4px;transition:width .8s;"></div></div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-top:3px;">'
+                    f'<div style="font-size:9px;color:#9f7aea;">● Invested</div>'
+                    f'<div style="font-size:9px;color:#fc8181;">{bar_pct:.0f}% redeemed ●</div></div></div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ─────────────────────────────────────────────────────────────────────────
     # ── STP / SWITCH VIEW ────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     elif view_mode == "↔️ STP / Switch":
-        all_tx = data.get("special_transactions", [])
-
+        all_tx         = data.get("special_transactions", [])
         stp_out_txs    = [t for t in all_tx if t["Type"] == "STP Out"]
         stp_in_txs     = [t for t in all_tx if t["Type"] == "STP In"]
         switch_out_txs = [t for t in all_tx if t["Type"] == "Switch Out"]
@@ -1696,25 +2053,38 @@ def render_dashboard(data):
         total_stp_in     = sum(t["Amount"] for t in stp_in_txs)
         total_switch_out = sum(t["Amount"] for t in switch_out_txs)
         total_switch_in  = sum(t["Amount"] for t in switch_in_txs)
+        total_moved      = total_stp_out + total_switch_out
 
-        # KPIs
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.markdown(_kpi_card("STP Out (transferred)", fmt_inr(total_stp_out),
-                f"{len(stp_out_txs)} events", "#f6ad55", "rgba(246,173,85,0.06)", "rgba(246,173,85,0.15)"), unsafe_allow_html=True)
-        with k2:
-            st.markdown(_kpi_card("STP In (received)", fmt_inr(total_stp_in),
-                f"{len(stp_in_txs)} events", "#68d391", "rgba(104,211,145,0.06)", "rgba(104,211,145,0.15)"), unsafe_allow_html=True)
-        with k3:
-            st.markdown(_kpi_card("Switch Out", fmt_inr(total_switch_out),
-                f"{len(switch_out_txs)} events", "#ed8936", "rgba(237,137,54,0.06)", "rgba(237,137,54,0.15)"), unsafe_allow_html=True)
-        with k4:
-            st.markdown(_kpi_card("Switch In", fmt_inr(total_switch_in),
-                f"{len(switch_in_txs)} events", "#4fd1c5", "rgba(79,209,197,0.06)", "rgba(79,209,197,0.15)"), unsafe_allow_html=True)
+        # ── Animated KPIs ──────────────────────────────────────────────────
+        sw_kpi = (
+            "<style>@keyframes swIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}"
+            ".swk{background:#0c0f1a;border-radius:14px;padding:16px 18px;animation:swIn .5s ease forwards;"
+            "transition:border-color .25s,transform .2s;}.swk:hover{transform:translateY(-3px);}"
+            ".swl{font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.4px;font-weight:600;margin-bottom:8px;}"
+            ".swv{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;}"
+            ".sws{font-size:10px;color:#4a5568;margin-top:5px;}</style>"
+            "<div style='display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;'>"
+            f"<div class='swk' style='border:1px solid rgba(246,173,85,0.2);animation-delay:.0s;'>"
+            f"<div class='swl'>STP Out</div><div class='swv' style='color:#f6ad55;'>{fmt_inr(total_stp_out)}</div>"
+            f"<div class='sws'>{len(stp_out_txs)} transfers</div></div>"
+            f"<div class='swk' style='border:1px solid rgba(104,211,145,0.2);animation-delay:.08s;'>"
+            f"<div class='swl'>STP In</div><div class='swv' style='color:#68d391;'>{fmt_inr(total_stp_in)}</div>"
+            f"<div class='sws'>{len(stp_in_txs)} transfers</div></div>"
+            f"<div class='swk' style='border:1px solid rgba(237,137,54,0.2);animation-delay:.16s;'>"
+            f"<div class='swl'>Switch Out</div><div class='swv' style='color:#ed8936;'>{fmt_inr(total_switch_out)}</div>"
+            f"<div class='sws'>{len(switch_out_txs)} events</div></div>"
+            f"<div class='swk' style='border:1px solid rgba(79,209,197,0.2);animation-delay:.24s;'>"
+            f"<div class='swl'>Switch In</div><div class='swv' style='color:#4fd1c5;'>{fmt_inr(total_switch_in)}</div>"
+            f"<div class='sws'>{len(switch_in_txs)} events</div></div>"
+            f"<div class='swk' style='border:1px solid rgba(99,179,237,0.2);animation-delay:.32s;'>"
+            f"<div class='swl'>Total Moved</div><div class='swv' style='color:#63b3ed;'>{fmt_inr(total_moved)}</div>"
+            f"<div class='sws'>STP + Switch combined</div></div></div>"
+        )
+        components.html(sw_kpi, height=110, scrolling=False)
 
-        # STP flow chart
+        # ── STP Flow: animated arrow diagram ─────────────────────────────────
         if stp_out_txs or stp_in_txs:
-            _dash_section("↔️ STP Flow — Where money moved")
+            _dash_section("↔️ STP Money Flow")
             stp_out_by = {}
             for t in stp_out_txs:
                 stp_out_by[t["Scheme"]] = stp_out_by.get(t["Scheme"], 0.0) + t["Amount"]
@@ -1722,32 +2092,53 @@ def render_dashboard(data):
             for t in stp_in_txs:
                 stp_in_by[t["Scheme"]] = stp_in_by.get(t["Scheme"], 0.0) + t["Amount"]
 
-            tc1, tc2 = st.columns(2)
-            with tc1:
-                st.markdown('<div style="font-size:12px;font-weight:600;color:#f6ad55;margin-bottom:8px;">⬅️ Money Left These Schemes (STP Out)</div>', unsafe_allow_html=True)
-                if stp_out_by:
-                    df_so = pd.DataFrame([{"Scheme": k, "Amount": v} for k,v in sorted(stp_out_by.items(), key=lambda x:-x[1])])
-                    fig_so = px.bar(df_so, x="Amount", y="Scheme", orientation="h",
-                        color="Amount", color_continuous_scale=["#7b341e","#dd6b20","#f6ad55","#fefcbf"])
-                    fig_so.update_layout(height=max(160, len(df_so)*36),
-                        xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=10,color="#718096"),title=""),
-                        coloraxis_showscale=False, **PLOT_BASE)
-                    st.plotly_chart(fig_so, use_container_width=True, config={"displayModeBar": False})
+            # Animated flow diagram
+            out_items = sorted(stp_out_by.items(), key=lambda x: -x[1])[:5]
+            in_items  = sorted(stp_in_by.items(),  key=lambda x: -x[1])[:5]
+            max_flow  = max([v for _, v in out_items + in_items] + [1])
 
-            with tc2:
-                st.markdown('<div style="font-size:12px;font-weight:600;color:#68d391;margin-bottom:8px;">➡️ Money Entered These Schemes (STP In)</div>', unsafe_allow_html=True)
-                if stp_in_by:
-                    df_si = pd.DataFrame([{"Scheme": k, "Amount": v} for k,v in sorted(stp_in_by.items(), key=lambda x:-x[1])])
-                    fig_si = px.bar(df_si, x="Amount", y="Scheme", orientation="h",
-                        color="Amount", color_continuous_scale=["#1a4731","#276749","#68d391","#c6f6d5"])
-                    fig_si.update_layout(height=max(160, len(df_si)*36),
-                        xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=10,color="#718096"),title=""),
-                        coloraxis_showscale=False, **PLOT_BASE)
-                    st.plotly_chart(fig_si, use_container_width=True, config={"displayModeBar": False})
+            flow_html = (
+                "<style>@keyframes fIn{from{opacity:0;transform:scaleX(0);}to{opacity:1;transform:scaleX(1);}}"
+                "@keyframes aIn{from{opacity:0;}to{opacity:1;}}</style>"
+                "<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:18px;'>"
+                "<div style='display:grid;grid-template-columns:1fr 60px 1fr;gap:0;align-items:center;'>"
+                "<div>"
+            )
+            for lbl, val in out_items:
+                w = (val / max_flow) * 100
+                short = clean_name(lbl)[:22] + "…" if len(clean_name(lbl)) > 22 else clean_name(lbl)
+                flow_html += (
+                    f"<div style='margin-bottom:12px;'>"
+                    f"<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    f"<span style='font-size:11px;color:#e2e8f0;'>{short}</span>"
+                    f"<span style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#f6ad55;font-weight:600;'>{fmt_inr(val)}</span></div>"
+                    f"<div style='background:#111627;border-radius:4px;height:7px;overflow:hidden;transform-origin:right;'>"
+                    f"<div style='height:100%;width:{w:.0f}%;background:linear-gradient(90deg,#f6ad55,#f6ad5588);border-radius:4px;"
+                    f"animation:fIn .9s ease forwards;transform-origin:right;'></div></div></div>"
+                )
+            flow_html += "</div>"
+            flow_html += (
+                "<div style='text-align:center;font-size:24px;animation:aIn 1s .5s forwards;opacity:0;color:#63b3ed;'>→</div>"
+                "<div>"
+            )
+            for lbl, val in in_items:
+                w = (val / max_flow) * 100
+                short = clean_name(lbl)[:22] + "…" if len(clean_name(lbl)) > 22 else clean_name(lbl)
+                flow_html += (
+                    f"<div style='margin-bottom:12px;'>"
+                    f"<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    f"<span style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#68d391;font-weight:600;'>{fmt_inr(val)}</span>"
+                    f"<span style='font-size:11px;color:#e2e8f0;'>{short}</span></div>"
+                    f"<div style='background:#111627;border-radius:4px;height:7px;overflow:hidden;'>"
+                    f"<div style='height:100%;width:{w:.0f}%;background:linear-gradient(90deg,#68d39188,#68d391);border-radius:4px;"
+                    f"animation:fIn .9s ease .2s forwards;'></div></div></div>"
+                )
+            flow_html += "</div></div></div>"
+            components.html(flow_html, height=max(220, max(len(out_items), len(in_items)) * 60 + 60), scrolling=False)
 
-        # Switch flow chart
+        # ── Switch flow ───────────────────────────────────────────────────────
         if switch_out_txs or switch_in_txs:
-            _dash_section("🔀 Switch Flow — Where money moved")
+            _dash_section("🔀 Switch Money Flow")
             sw_out_by = {}
             for t in switch_out_txs:
                 sw_out_by[t["Scheme"]] = sw_out_by.get(t["Scheme"], 0.0) + t["Amount"]
@@ -1757,36 +2148,43 @@ def render_dashboard(data):
 
             sc1, sc2 = st.columns(2)
             with sc1:
-                st.markdown('<div style="font-size:12px;font-weight:600;color:#ed8936;margin-bottom:8px;">⬅️ Switched Out From</div>', unsafe_allow_html=True)
-                if sw_out_by:
-                    df_swo = pd.DataFrame([{"Scheme": k, "Amount": v} for k,v in sorted(sw_out_by.items(), key=lambda x:-x[1])])
-                    fig_swo = px.bar(df_swo, x="Amount", y="Scheme", orientation="h",
-                        color="Amount", color_continuous_scale=["#7b341e","#c05621","#ed8936","#fbd38d"])
-                    fig_swo.update_layout(height=max(160, len(df_swo)*36),
-                        xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=10,color="#718096"),title=""),
-                        coloraxis_showscale=False, **PLOT_BASE)
-                    st.plotly_chart(fig_swo, use_container_width=True, config={"displayModeBar": False})
+                _dash_section("⬅️ Switched Out From")
+                for scheme, val in sorted(sw_out_by.items(), key=lambda x: -x[1]):
+                    st.markdown(
+                        f'<div style="background:#0c0f1a;border:1px solid rgba(237,137,54,0.2);border-radius:10px;'
+                        f'padding:11px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">'
+                        f'<span style="font-size:12px;color:#e2e8f0;">{clean_name(scheme)}</span>'
+                        f'<span style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:#ed8936;">{fmt_inr(val)}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
             with sc2:
-                st.markdown('<div style="font-size:12px;font-weight:600;color:#4fd1c5;margin-bottom:8px;">➡️ Switched Into</div>', unsafe_allow_html=True)
-                if sw_in_by:
-                    df_swi = pd.DataFrame([{"Scheme": k, "Amount": v} for k,v in sorted(sw_in_by.items(), key=lambda x:-x[1])])
-                    fig_swi = px.bar(df_swi, x="Amount", y="Scheme", orientation="h",
-                        color="Amount", color_continuous_scale=["#1d4044","#2c7a7b","#4fd1c5","#b2f5ea"])
-                    fig_swi.update_layout(height=max(160, len(df_swi)*36),
-                        xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=10,color="#718096"),title=""),
-                        coloraxis_showscale=False, **PLOT_BASE)
-                    st.plotly_chart(fig_swi, use_container_width=True, config={"displayModeBar": False})
+                _dash_section("➡️ Switched Into")
+                for scheme, val in sorted(sw_in_by.items(), key=lambda x: -x[1]):
+                    st.markdown(
+                        f'<div style="background:#0c0f1a;border:1px solid rgba(79,209,197,0.2);border-radius:10px;'
+                        f'padding:11px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">'
+                        f'<span style="font-size:12px;color:#e2e8f0;">{clean_name(scheme)}</span>'
+                        f'<span style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:#4fd1c5;">{fmt_inr(val)}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
-        # Reversal detail tables
         rev_types = ["STP In Reversal","STP Out Reversal","Switch In Reversal","Switch Out Reversal"]
         reversals = [t for t in all_tx if t["Type"] in rev_types]
         if reversals:
-            _dash_section("↩️ STP / Switch Reversals")
-            st.dataframe(pd.DataFrame([
-                {"Date": t["Date"], "Scheme": t["Scheme"], "Type": t["Type"],
-                 "Amount": fmt_inr(t["Amount"]), "Description": t.get("Description","")}
-                for t in sorted(reversals, key=lambda x: x["date_obj"], reverse=True)
-            ]), use_container_width=True, hide_index=True)
+            _dash_section("↩️ Reversals")
+            for t in reversals:
+                meta = TX_META.get(t["Type"], TX_META["Other"])
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid {meta["color"]}33;border-left:3px solid {meta["color"]};'
+                    f'border-radius:0 10px 10px 0;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">'
+                    f'<div><div style="font-size:12px;color:#e2e8f0;">{t["Scheme"]}</div>'
+                    f'<div style="font-size:10px;color:#718096;">{t["Date"]} · {t["Type"]}</div></div>'
+                    f'<span style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:{meta["color"]};">{fmt_inr(t["Amount"])}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         if not (stp_out_txs or stp_in_txs or switch_out_txs or switch_in_txs):
             st.info("No STP or Switch transactions found in your portfolio.")
@@ -1795,116 +2193,184 @@ def render_dashboard(data):
     # ── SWP / REDEMPTION VIEW ────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     elif view_mode == "💸 SWP / Redemption":
-        all_tx = data.get("special_transactions", [])
+        all_tx     = data.get("special_transactions", [])
+        swp_txs    = [t for t in all_tx if t["Type"] == "SWP"]
+        red_txs    = [t for t in all_tx if t["Type"] == "Redemption"]
+        swp_rev    = [t for t in all_tx if t["Type"] == "SWP Reversal"]
+        red_rev    = [t for t in all_tx if t["Type"] == "Redemption Reversal"]
 
-        swp_txs  = [t for t in all_tx if t["Type"] == "SWP"]
-        red_txs  = [t for t in all_tx if t["Type"] == "Redemption"]
-        swp_rev  = [t for t in all_tx if t["Type"] == "SWP Reversal"]
-        red_rev  = [t for t in all_tx if t["Type"] == "Redemption Reversal"]
-
-        total_swp = sum(t["Amount"] for t in swp_txs)
-        total_red = sum(t["Amount"] for t in red_txs)
-        total_out = total_swp + total_red
-
-        # Returns on redeemed schemes
+        total_swp  = sum(t["Amount"] for t in swp_txs)
+        total_red  = sum(t["Amount"] for t in red_txs)
+        total_out  = total_swp + total_red
         redeemed_positions = data.get("redeemed", [])
         total_realized_pnl = data.get("realized_pnl", 0.0)
+        pnl_color  = "#48bb78" if total_realized_pnl >= 0 else "#fc8181"
 
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.markdown(_kpi_card("Total Withdrawn (SWP)", fmt_inr(total_swp),
-                f"{len(swp_txs)} SWP events", "#fc8181", "rgba(252,129,129,0.06)", "rgba(252,129,129,0.15)"), unsafe_allow_html=True)
-        with k2:
-            st.markdown(_kpi_card("Total Redeemed", fmt_inr(total_red),
-                f"{len(red_txs)} redemption events", "#fc8181", "rgba(252,129,129,0.06)", "rgba(252,129,129,0.15)"), unsafe_allow_html=True)
-        with k3:
-            st.markdown(_kpi_card("Total Cash Out", fmt_inr(total_out),
-                "SWP + Redemptions", "#f6ad55", "rgba(246,173,85,0.06)", "rgba(246,173,85,0.15)"), unsafe_allow_html=True)
-        with k4:
-            color = "#48bb78" if total_realized_pnl >= 0 else "#fc8181"
-            st.markdown(_kpi_card("Realized P&L", fmt_inr(total_realized_pnl),
-                "Fully exited positions", color, f"rgba({'72,187,120' if total_realized_pnl>=0 else '252,129,129'},0.06)",
-                f"rgba({'72,187,120' if total_realized_pnl>=0 else '252,129,129'},0.15)"), unsafe_allow_html=True)
+        # ── Animated KPIs ────────────────────────────────────────────────────
+        rkpi = (
+            "<style>@keyframes rIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}"
+            ".rk{background:#0c0f1a;border-radius:14px;padding:16px 18px;animation:rIn .5s ease forwards;"
+            "transition:border-color .25s,transform .2s;}.rk:hover{transform:translateY(-3px);}"
+            ".rl{font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.4px;font-weight:600;margin-bottom:8px;}"
+            ".rv{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;}"
+            ".rs{font-size:10px;color:#4a5568;margin-top:5px;}</style>"
+            "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;'>"
+            f"<div class='rk' style='border:1px solid rgba(252,129,129,0.2);animation-delay:.0s;'>"
+            f"<div class='rl'>SWP Withdrawn</div><div class='rv' style='color:#fc8181;'>{fmt_inr(total_swp)}</div>"
+            f"<div class='rs'>{len(swp_txs)} events</div></div>"
+            f"<div class='rk' style='border:1px solid rgba(252,129,129,0.2);animation-delay:.08s;'>"
+            f"<div class='rl'>Total Redeemed</div><div class='rv' style='color:#fc8181;'>{fmt_inr(total_red)}</div>"
+            f"<div class='rs'>{len(red_txs)} redemptions</div></div>"
+            f"<div class='rk' style='border:1px solid rgba(246,173,85,0.2);animation-delay:.16s;'>"
+            f"<div class='rl'>Total Cash Out</div><div class='rv' style='color:#f6ad55;'>{fmt_inr(total_out)}</div>"
+            f"<div class='rs'>SWP + Redemptions</div></div>"
+            f"<div class='rk' style='border:1px solid rgba({'72,187,120' if total_realized_pnl>=0 else '252,129,129'},0.2);animation-delay:.24s;'>"
+            f"<div class='rl'>Realized P&L</div>"
+            f"<div class='rv' style='color:{pnl_color};'>{'▲' if total_realized_pnl>=0 else '▼'} {fmt_inr(total_realized_pnl)}</div>"
+            f"<div class='rs'>Fully exited positions</div></div></div>"
+        )
+        components.html(rkpi, height=110, scrolling=False)
 
-        # Top redeemed schemes chart
+        # ── Animated donut: redemption by scheme + returns chart ─────────────
         red_by_scheme = {}
         for t in red_txs:
             red_by_scheme[t["Scheme"]] = red_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
-
         swp_by_scheme = {}
         for t in swp_txs:
             swp_by_scheme[t["Scheme"]] = swp_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
 
-        oc1, oc2 = st.columns(2)
-        with oc1:
-            _dash_section("🏦 Most Redeemed Schemes")
+        rc1, rc2 = st.columns(2)
+        import math
+
+        with rc1:
+            _dash_section("🍩 Redemption by Scheme")
             if red_by_scheme:
-                df_r = pd.DataFrame([{"Scheme": k, "Redeemed": v} for k,v in sorted(red_by_scheme.items(), key=lambda x:-x[1])])
-                fig_r = px.bar(df_r, x="Redeemed", y="Scheme", orientation="h",
-                    color="Redeemed", color_continuous_scale=["#1a0a0a","#742a2a","#fc8181","#fed7d7"])
-                fig_r.update_layout(height=max(200, len(df_r)*36),
-                    xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=11,color="#718096"),title=""),
-                    coloraxis_showscale=False, **PLOT_BASE)
-                st.plotly_chart(fig_r, use_container_width=True, config={"displayModeBar": False})
+                rd_items = sorted(red_by_scheme.items(), key=lambda x: -x[1])[:7]
+                rd_total = sum(v for _, v in rd_items) or 1
+                rd_cols  = ["#fc8181","#f6ad55","#fbb6ce","#742a2a","#ed8936","#fed7d7","#fc8181"]
+                cxr, cyr, ror, rir = 90, 90, 72, 44
+                segs_r = ""; leg_r = ""; ang_r = 0.0
+                for i, (lbl, val) in enumerate(rd_items):
+                    pct_r = val / rd_total * 100
+                    col_r = rd_cols[i % len(rd_cols)]
+                    sw_r  = (pct_r/100)*360 - 2.5
+                    if sw_r <= 0: ang_r += (pct_r/100)*360; continue
+                    sr_r  = math.radians(ang_r - 90); er_r = math.radians(ang_r + sw_r - 90)
+                    x1or  = cxr+ror*math.cos(sr_r); y1or = cyr+ror*math.sin(sr_r)
+                    x2or  = cxr+ror*math.cos(er_r); y2or = cyr+ror*math.sin(er_r)
+                    x1ir  = cxr+rir*math.cos(er_r); y1ir = cyr+rir*math.sin(er_r)
+                    x2ir  = cxr+rir*math.cos(sr_r); y2ir = cyr+rir*math.sin(sr_r)
+                    lf_r  = 1 if sw_r > 180 else 0
+                    path_r = (f"M {x1or:.1f} {y1or:.1f} A {ror} {ror} 0 {lf_r} 1 {x2or:.1f} {y2or:.1f} "
+                              f"L {x1ir:.1f} {y1ir:.1f} A {rir} {rir} 0 {lf_r} 0 {x2ir:.1f} {y2ir:.1f} Z")
+                    segs_r += (f'<path d="{path_r}" fill="{col_r}" opacity="0" '
+                               f'style="animation:rdIn .5s ease {i*0.1:.1f}s forwards;cursor:pointer;transition:filter .15s;" '
+                               f'onmouseover="this.style.filter=\'brightness(1.3)\'" onmouseout="this.style.filter=\'brightness(1)\'">'
+                               f'<title>{lbl}: {fmt_inr(val)} ({pct_r:.1f}%)</title></path>')
+                    short_r = lbl[:20] + "…" if len(lbl) > 20 else lbl
+                    leg_r  += (f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+                               f'<div style="display:flex;align-items:center;gap:5px;"><span style="width:7px;height:7px;border-radius:50%;background:{col_r};display:inline-block;"></span>'
+                               f'<span style="font-size:10px;color:#e2e8f0;">{short_r}</span></div>'
+                               f'<span style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#f7fafc;font-weight:600;">{fmt_inr(val)}</span></div>')
+                    ang_r  += (pct_r/100)*360
+                rd_html = (
+                    "<style>@keyframes rdIn{from{opacity:0;transform:scale(.75);transform-origin:90px 90px;}"
+                    "to{opacity:1;transform:scale(1);transform-origin:90px 90px;}}</style>"
+                    "<div style='background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:16px;'>"
+                    "<div style='display:flex;align-items:center;gap:12px;'>"
+                    f"<svg width='180' height='180' viewBox='0 0 180 180' style='flex-shrink:0;'>"
+                    f"{segs_r}<circle cx='{cxr}' cy='{cyr}' r='{rir-2}' fill='#07090f'/>"
+                    f"<text x='{cxr}' y='{cyr+4}' text-anchor='middle' style='font-size:9px;fill:#718096;'>redeemed</text>"
+                    f"</svg><div style='flex:1;'>{leg_r}</div></div></div>"
+                )
+                components.html(rd_html, height=220, scrolling=False)
             else:
                 st.info("No redemptions found.")
 
-        with oc2:
-            _dash_section("💸 SWP by Scheme")
-            if swp_by_scheme:
-                df_swp = pd.DataFrame([{"Scheme": k, "SWP Amount": v} for k,v in sorted(swp_by_scheme.items(), key=lambda x:-x[1])])
-                fig_swp = px.bar(df_swp, x="SWP Amount", y="Scheme", orientation="h",
-                    color="SWP Amount", color_continuous_scale=["#1a0a0a","#742a2a","#fc8181","#fbb6ce"])
-                fig_swp.update_layout(height=max(200, len(df_swp)*36),
-                    xaxis=dict(visible=False), yaxis=dict(tickfont=dict(size=11,color="#718096"),title=""),
-                    coloraxis_showscale=False, **PLOT_BASE)
-                st.plotly_chart(fig_swp, use_container_width=True, config={"displayModeBar": False})
+        with rc2:
+            _dash_section("📈 Returns on Exited Positions")
+            if redeemed_positions:
+                exit_items = sorted(redeemed_positions, key=lambda x: x["profit"], reverse=True)
+                fig_exit = go.Figure()
+                names_e  = [clean_name(r["scheme"])[:22] for r in exit_items]
+                profits  = [r["profit"] for r in exit_items]
+                pct_rets = [(r["profit"]/r["invested"]*100) if r["invested"] else 0 for r in exit_items]
+                colors_e = ["#48bb78" if p >= 0 else "#fc8181" for p in profits]
+                fig_exit.add_trace(go.Bar(
+                    x=names_e, y=pct_rets,
+                    marker_color=colors_e,
+                    text=[f"{'▲' if p>=0 else '▼'}{abs(p):.1f}%" for p in pct_rets],
+                    textposition="outside",
+                    textfont=dict(size=10, color="#718096"),
+                    hovertemplate="<b>%{x}</b><br>Return: %{y:.1f}%<extra></extra>",
+                ))
+                fig_exit.add_hline(y=0, line_color="rgba(255,255,255,0.1)", line_width=1)
+                fig_exit.update_layout(
+                    height=220, showlegend=False,
+                    xaxis=dict(tickfont=dict(size=9, color="#718096"), tickangle=-30),
+                    yaxis=dict(showgrid=True, gridcolor=GRID, tickfont=dict(size=10, color="#718096"),
+                               ticksuffix="%"),
+                    **PLOT_BASE,
+                )
+                st.plotly_chart(fig_exit, use_container_width=True, config={"displayModeBar": False})
             else:
-                st.info("No SWP transactions found.")
+                st.info("No fully exited positions found.")
 
-        # Fully exited positions with returns
+        # ── Exited positions detail cards ────────────────────────────────────
         if redeemed_positions:
-            _dash_section("📊 Fully Exited Positions — Returns Generated")
-            exit_rows = []
-            for r in redeemed_positions:
-                profit = r["profit"]
-                pnl_pct = (profit / r["invested"] * 100) if r["invested"] else 0.0
-                exit_rows.append({
-                    "Scheme": clean_name(r["scheme"]),
-                    "Invested": fmt_inr(r["invested"]),
-                    "Redeemed": fmt_inr(r["redeemed"]),
-                    "P&L": (f"▲ {fmt_inr(profit)}" if profit >= 0 else f"▼ {fmt_inr(profit)}"),
-                    "Return %": f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%",
-                })
-            st.dataframe(pd.DataFrame(exit_rows), use_container_width=True, hide_index=True)
+            _dash_section("🏆 Fully Exited Positions — Full Detail")
+            for r in sorted(redeemed_positions, key=lambda x: x["profit"], reverse=True):
+                profit  = r["profit"]
+                pnl_pct = (profit / r["invested"] * 100) if r["invested"] else 0
+                pc = "#48bb78" if profit >= 0 else "#fc8181"
+                bc = "rgba(72,187,120,0.1)" if profit >= 0 else "rgba(252,129,129,0.1)"
+                bc2 = "rgba(72,187,120,0.2)" if profit >= 0 else "rgba(252,129,129,0.2)"
+                st.markdown(
+                    f'<div style="background:{bc};border:1px solid {bc2};border-radius:12px;padding:14px 18px;margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+                    f'<div style="font-size:13px;color:#f7fafc;font-weight:600;">{clean_name(r["scheme"])}</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:{pc};">'
+                    f'{"▲" if profit>=0 else "▼"} {fmt_inr(profit)} &nbsp;<span style="font-size:11px;">({abs(pnl_pct):.1f}%)</span></div></div>'
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+                    f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Invested</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;color:#9f7aea;font-weight:600;">{fmt_inr(r["invested"])}</div></div>'
+                    f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Redeemed</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;color:#fc8181;font-weight:600;">{fmt_inr(r["redeemed"])}</div></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-        # Detail tables
-        if red_txs:
-            _dash_section("📋 All Redemption Transactions")
-            st.dataframe(pd.DataFrame([
-                {"Date": t["Date"], "Scheme": t["Scheme"], "Amount": fmt_inr(t["Amount"]),
-                 "Units": f'{t["Units"]:+.3f}', "Description": t.get("Description","")}
-                for t in sorted(red_txs, key=lambda x: x["date_obj"], reverse=True)
-            ]), use_container_width=True, hide_index=True)
-
+        # ── SWP detail cards ─────────────────────────────────────────────────
         if swp_txs:
-            _dash_section("📋 All SWP Transactions")
-            st.dataframe(pd.DataFrame([
-                {"Date": t["Date"], "Scheme": t["Scheme"], "Amount": fmt_inr(t["Amount"]),
-                 "Units": f'{t["Units"]:+.3f}', "Description": t.get("Description","")}
-                for t in sorted(swp_txs, key=lambda x: x["date_obj"], reverse=True)
-            ]), use_container_width=True, hide_index=True)
+            _dash_section("💸 SWP Transactions")
+            for t in sorted(swp_txs, key=lambda x: x["date_obj"], reverse=True):
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid rgba(252,129,129,0.15);border-radius:10px;'
+                    f'padding:11px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div><div style="font-size:12px;color:#e2e8f0;font-weight:500;">{t["Scheme"]}</div>'
+                    f'<div style="font-size:10px;color:#718096;margin-top:2px;">{t["Date"]} · {t.get("Description","")[:55]}</div></div>'
+                    f'<span style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#fc8181;">{fmt_inr(t["Amount"])}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         if swp_rev or red_rev:
             _dash_section("↩️ Reversals")
-            st.dataframe(pd.DataFrame([
-                {"Date": t["Date"], "Scheme": t["Scheme"], "Type": t["Type"],
-                 "Amount": fmt_inr(t["Amount"]), "Description": t.get("Description","")}
-                for t in sorted(swp_rev + red_rev, key=lambda x: x["date_obj"], reverse=True)
-            ]), use_container_width=True, hide_index=True)
+            for t in sorted(swp_rev + red_rev, key=lambda x: x["date_obj"], reverse=True):
+                meta = TX_META.get(t["Type"], TX_META["Other"])
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid {meta["color"]}33;border-left:3px solid {meta["color"]};'
+                    f'border-radius:0 10px 10px 0;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">'
+                    f'<div><div style="font-size:12px;color:#e2e8f0;">{t["Scheme"]}</div>'
+                    f'<div style="font-size:10px;color:#718096;">{t["Date"]} · {t["Type"]}</div></div>'
+                    f'<span style="font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:{meta["color"]};">{fmt_inr(t["Amount"])}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         if not (swp_txs or red_txs):
             st.info("No SWP or Redemption transactions found in your portfolio.")
+
 
 
 # ─────────────────────────────────────────────
