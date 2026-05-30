@@ -1794,25 +1794,66 @@ def render_dashboard(data):
         import math
         all_tx      = data.get("special_transactions", [])
         ls_txs      = [t for t in all_tx if t["Type"] == "Lumpsum Purchase"]
+        sip_txs_l   = [t for t in all_tx if t["Type"] == "SIP"]
         redemptions = [t for t in all_tx if t["Type"] == "Redemption"]
         red_rev     = [t for t in all_tx if t["Type"] == "Redemption Reversal"]
+
+        # ── SMART ATTRIBUTION LOGIC ────────────────────────────────────────
+        # Per scheme: calculate how much was invested via lumpsum vs SIP
+        # Then attribute each redemption proportionally
+        # e.g. scheme had ₹30k lumpsum + ₹70k SIP = 30% lumpsum
+        # If ₹50k redeemed → ₹15k attributed to lumpsum, ₹35k to SIP
+        # Schemes with ZERO lumpsum investment → NOT shown here at all
 
         ls_by_scheme  = {}
         for t in ls_txs:
             ls_by_scheme[t["Scheme"]] = ls_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
-        red_by_scheme = {}
+
+        sip_by_scheme_l = {}
+        for t in sip_txs_l:
+            sip_by_scheme_l[t["Scheme"]] = sip_by_scheme_l.get(t["Scheme"], 0.0) + t["Amount"]
+
+        # All redemptions grouped by scheme
+        red_all_by_scheme = {}
         for t in redemptions:
-            red_by_scheme[t["Scheme"]] = red_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
+            red_all_by_scheme[t["Scheme"]] = red_all_by_scheme.get(t["Scheme"], 0.0) + t["Amount"]
 
-        total_ls       = sum(ls_by_scheme.values())
-        total_redeemed = sum(red_by_scheme.values())
-        net            = total_ls - total_redeemed
-        net_color      = "#48bb78" if net >= 0 else "#fc8181"
-        net_bg         = "rgba(72,187,120,0.08)" if net >= 0 else "rgba(252,129,129,0.08)"
-        net_border     = "rgba(72,187,120,0.25)" if net >= 0 else "rgba(252,129,129,0.25)"
-        redemption_rate = (total_redeemed / total_ls * 100) if total_ls else 0
+        # For each scheme that had BOTH lumpsum and redemptions:
+        # attribute redemption proportionally based on lumpsum share of total investment
+        red_by_scheme = {}   # only lumpsum-attributed portion
+        red_note      = {}   # explanation notes per scheme
 
-        # ── Hero KPI cards ─────────────────────────────────────────────────────
+        for scheme, total_red in red_all_by_scheme.items():
+            ls_inv  = ls_by_scheme.get(scheme, 0.0)
+            sip_inv = sip_by_scheme_l.get(scheme, 0.0)
+            total_inv = ls_inv + sip_inv
+
+            if ls_inv == 0:
+                # Zero lumpsum → skip entirely (this is a SIP-only scheme)
+                continue
+
+            if sip_inv == 0:
+                # Pure lumpsum scheme → 100% of redemption is lumpsum
+                red_by_scheme[scheme] = total_red
+                red_note[scheme] = "100% lumpsum scheme"
+            else:
+                # Mixed scheme → attribute proportionally
+                ls_share = ls_inv / total_inv
+                attributed = total_red * ls_share
+                red_by_scheme[scheme] = attributed
+                red_note[scheme] = f"{ls_share*100:.0f}% lumpsum share · full redemption {fmt_inr(total_red)}"
+
+        total_ls        = sum(ls_by_scheme.values())
+        total_ls_red    = sum(red_by_scheme.values())   # only lumpsum-attributed portion
+        net             = total_ls - total_ls_red
+        net_color       = "#48bb78" if net >= 0 else "#fc8181"
+        net_border      = "rgba(72,187,120,0.25)" if net >= 0 else "rgba(252,129,129,0.25)"
+        # Redemption rate capped at 100% for display (over-redemption handled separately)
+        redemption_rate = min((total_ls_red / total_ls * 100) if total_ls else 0, 100)
+        over_redeemed   = total_ls_red > total_ls
+        ls_schemes_with_red = len(red_by_scheme)
+
+        # ── Hero KPI cards ────────────────────────────────────────────────
         lhero = (
             "<style>@keyframes lhIn{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}"
             "@keyframes lPulse{0%,100%{box-shadow:0 0 0 transparent;}60%{box-shadow:0 0 18px rgba(159,122,234,.12);}}"
@@ -1823,68 +1864,83 @@ def render_dashboard(data):
             "margin-bottom:10px;display:flex;align-items:center;gap:6px;}"
             ".lhv{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:-.5px;}"
             ".lhs{font-size:10px;color:#4a5568;margin-top:6px;}</style>"
-            "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px;'>"
+            "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;'>"
 
             f"<div class='lhc' style='border:1px solid rgba(159,122,234,0.25);animation-delay:.0s;'>"
             f"<div class='lhl'><span style='width:6px;height:6px;border-radius:50%;background:#9f7aea;"
-            f"box-shadow:0 0 6px #9f7aea;display:inline-block;'></span>Total Lumpsum Invested</div>"
+            f"box-shadow:0 0 6px #9f7aea;display:inline-block;'></span>Lumpsum Invested</div>"
             f"<div class='lhv' style='color:#9f7aea;'>{fmt_inr(total_ls)}</div>"
             f"<div class='lhs'>{len(ls_by_scheme)} schemes · {len(ls_txs)} purchases</div></div>"
 
             f"<div class='lhc' style='border:1px solid rgba(252,129,129,0.25);animation-delay:.1s;'>"
             f"<div class='lhl'><span style='width:6px;height:6px;border-radius:50%;background:#fc8181;"
-            f"box-shadow:0 0 6px #fc8181;display:inline-block;'></span>Total Redeemed</div>"
-            f"<div class='lhv' style='color:#fc8181;'>{fmt_inr(total_redeemed)}</div>"
-            f"<div class='lhs'>{len(redemptions)} redemptions · {len(red_by_scheme)} schemes</div></div>"
+            f"box-shadow:0 0 6px #fc8181;display:inline-block;'></span>Attributed Redemptions</div>"
+            f"<div class='lhv' style='color:#fc8181;'>{fmt_inr(total_ls_red)}</div>"
+            f"<div class='lhs'>Lumpsum-portion only · {ls_schemes_with_red} schemes</div></div>"
 
             f"<div class='lhc' style='border:1px solid {net_border};animation-delay:.2s;'>"
             f"<div class='lhl'><span style='width:6px;height:6px;border-radius:50%;background:{net_color};"
-            f"box-shadow:0 0 6px {net_color};display:inline-block;'></span>Net Deployed</div>"
+            f"box-shadow:0 0 6px {net_color};display:inline-block;'></span>Net Lumpsum Position</div>"
             f"<div class='lhv' style='color:{net_color};'>{'▲' if net>=0 else '▼'} {fmt_inr(abs(net))}</div>"
-            f"<div class='lhs'>Invested minus redeemed</div></div>"
+            f"<div class='lhs'>{'Still deployed' if net>=0 else 'Over-redeemed'}</div></div>"
 
             f"<div class='lhc' style='border:1px solid rgba(246,173,85,0.25);animation-delay:.3s;'>"
             f"<div class='lhl'><span style='width:6px;height:6px;border-radius:50%;background:#f6ad55;"
-            f"box-shadow:0 0 6px #f6ad55;display:inline-block;'></span>Redemption Rate</div>"
+            f"box-shadow:0 0 6px #f6ad55;display:inline-block;'></span>Lumpsum Redemption Rate</div>"
             f"<div class='lhv' style='color:#f6ad55;'>{redemption_rate:.1f}%</div>"
-            f"<div class='lhs'>{fmt_inr(total_redeemed)} of {fmt_inr(total_ls)} taken out</div></div>"
+            f"<div class='lhs'>Of lumpsum capital only</div></div>"
             "</div>"
         )
         st.markdown(lhero, unsafe_allow_html=True)
 
-        # ── Redemption rate visual gauge ──────────────────────────────────────
-        gauge_w = min(redemption_rate, 100)
-        gauge_color = "#48bb78" if redemption_rate < 30 else "#f6ad55" if redemption_rate < 70 else "#fc8181"
-        gauge_label = "Low - Good" if redemption_rate < 30 else "Moderate" if redemption_rate < 70 else "High - Review"
-        still_pct   = 100 - redemption_rate
-        still_w     = 100 - gauge_w
-        gauge_html  = (
+        # ── Attribution info banner ────────────────────────────────────────
+        mixed_schemes = [s for s in ls_by_scheme if sip_by_scheme_l.get(s, 0) > 0]
+        sip_only_reds = [s for s in red_all_by_scheme if ls_by_scheme.get(s, 0) == 0]
+        if mixed_schemes or sip_only_reds:
+            info_parts = []
+            if mixed_schemes:
+                info_parts.append(f"<b>{len(mixed_schemes)} mixed schemes</b> (SIP + Lumpsum) — redemptions split proportionally")
+            if sip_only_reds:
+                info_parts.append(f"<b>{len(sip_only_reds)} SIP-only schemes</b> excluded (see SIP tab)")
+            st.markdown(
+                f'<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.15);"'
+                f'border-left:3px solid #63b3ed;border-radius:0 10px 10px 0;'
+                f'padding:10px 16px;margin-bottom:18px;font-size:12px;color:#718096;">'
+                f'ℹ️ Smart Attribution: {" · ".join(info_parts)}</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Capital Retention Gauge (capped properly) ─────────────────────
+        gauge_pct    = min(redemption_rate, 100)
+        remain_pct   = max(100 - gauge_pct, 0)
+        gauge_color  = "#48bb78" if gauge_pct < 30 else "#f6ad55" if gauge_pct < 70 else "#fc8181"
+        gauge_label  = "Low — Good" if gauge_pct < 30 else "Moderate" if gauge_pct < 70 else "High — Review"
+        gauge_html   = (
             "<div style='background:linear-gradient(135deg,#0c0f1a,#111627);"
             "border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:18px 22px;margin-bottom:18px;'>"
             "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>"
             "<div style='font-size:11px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:1.5px;'>"
-            "Capital Retention Gauge</div>"
+            "Lumpsum Capital Retention</div>"
             f"<span style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;color:{gauge_color};'>"
             f"{gauge_label}</span></div>"
             "<div style='background:#111627;border-radius:8px;height:14px;overflow:hidden;'>"
-            f"<div style='height:100%;width:{still_w:.1f}%;background:linear-gradient(90deg,#9f7aea,#63b3ed);"
+            f"<div style='height:100%;width:{remain_pct:.1f}%;background:linear-gradient(90deg,#9f7aea,#63b3ed);"
             "border-radius:8px;'></div></div>"
             "<div style='display:flex;justify-content:space-between;margin-top:6px;'>"
-            f"<div style='font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;'>● Still Invested {still_pct:.1f}%</div>"
-            f"<div style='font-size:10px;color:#fc8181;font-family:IBM Plex Mono,monospace;'>Redeemed {redemption_rate:.1f}% ●</div>"
+            f"<div style='font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;'>● Still Invested {remain_pct:.1f}%</div>"
+            f"<div style='font-size:10px;color:#fc8181;font-family:IBM Plex Mono,monospace;'>Redeemed {gauge_pct:.1f}% ●</div>"
             "</div></div>"
         )
         st.markdown(gauge_html, unsafe_allow_html=True)
 
-        # ── Two animated donuts side by side ──────────────────────────────────
+        # ── Two animated donuts side by side ──────────────────────────────
         pal_inv = ["#9f7aea","#63b3ed","#4fd1c5","#48bb78","#f6ad55","#fc8181","#ed8936"]
         pal_red = ["#fc8181","#f6ad55","#fbb6ce","#ed8936","#742a2a","#fed7d7","#fc8181"]
 
         def _build_donut(items_dict, pal_c, cx_d, cy_d, ro_d, ri_d, anim_prefix):
             items_x = sorted(items_dict.items(), key=lambda x: -x[1])[:7]
             total_x = sum(v for _, v in items_x) or 1
-            segs_x = ""; leg_x = ""; ang_x = 0.0
-            kf_x   = ""
+            segs_x = ""; leg_x = ""; ang_x = 0.0; kf_x = ""
             for i, (lbl, val) in enumerate(items_x):
                 pct_x = val / total_x * 100
                 c_x   = pal_c[i % len(pal_c)]
@@ -1904,11 +1960,19 @@ def render_dashboard(data):
                 segs_x += (f'<path d="{path_x}" fill="{c_x}" opacity="0" '
                            f'style="animation:{anim_prefix}{i} .55s ease {i*.12:.2f}s forwards;cursor:pointer;'
                            f'transition:filter .2s,transform .2s;transform-origin:{cx_d}px {cy_d}px;" '
-                           f'onmouseover="this.style.filter=\'brightness(1.3) drop-shadow(0 0 5px {c_x})\';this.style.transform=\'scale(1.05)\'" '
-                           f'onmouseout="this.style.filter=\'brightness(1)\';this.style.transform=\'scale(1)\'">'
+                           f'onmouseover="this.style.filter=\'brightness(1.3) drop-shadow(0 0 5px {c_x})\';" '
+                           f'onmouseout="this.style.filter=\'brightness(1)\';">'
                            f'<title>{lbl}: {fmt_inr(val)} ({pct_x:.1f}%)</title></path>')
                 short_x = lbl[:22]+"…" if len(lbl)>22 else lbl
-                leg_x  += ( f'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);">' f'<div style="display:flex;align-items:center;gap:6px;">' f'<span style="width:7px;height:7px;border-radius:50%;background:{c_x};box-shadow:0 0 5px {c_x}66;display:inline-block;flex-shrink:0;"></span>' f'<span style="font-size:10px;color:#e2e8f0;">{short_x}</span></div>' f'<div style="text-align:right;">' f'<div style="font-family:IBM Plex Mono,monospace;font-size:10px;font-weight:700;color:#f7fafc;">{fmt_inr(val)}</div>' f'<div style="font-size:9px;color:#4a5568;">{pct_x:.1f}%</div></div></div>')
+                leg_x  += (f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                           f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+                           f'<div style="display:flex;align-items:center;gap:6px;">'
+                           f'<span style="width:7px;height:7px;border-radius:50%;background:{c_x};'
+                           f'box-shadow:0 0 5px {c_x}66;display:inline-block;flex-shrink:0;"></span>'
+                           f'<span style="font-size:10px;color:#e2e8f0;">{short_x}</span></div>'
+                           f'<div style="text-align:right;">'
+                           f'<div style="font-family:IBM Plex Mono,monospace;font-size:10px;font-weight:700;color:#f7fafc;">{fmt_inr(val)}</div>'
+                           f'<div style="font-size:9px;color:#4a5568;">{pct_x:.1f}%</div></div></div>')
                 ang_x  += (pct_x/100)*360
             return kf_x, segs_x, leg_x
 
@@ -1921,7 +1985,7 @@ def render_dashboard(data):
                     "<div style='background:linear-gradient(135deg,#0c0f1a,#0d1020);"
                     "border:1px solid rgba(159,122,234,0.15);border-radius:16px;padding:18px;'>"
                     "<div style='font-family:Syne,sans-serif;font-size:10px;font-weight:700;color:#9f7aea;"
-                    "text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;'>💜 Where You Invested</div>"
+                    "text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;'>💜 Where You Invested (Lumpsum)</div>"
                     "<div style='display:flex;align-items:center;gap:14px;'>"
                     f"<svg width='190' height='190' viewBox='0 0 190 190' style='flex-shrink:0;'>"
                     f"{segs_i}<circle cx='95' cy='95' r='46' fill='#07090f'/>"
@@ -1929,7 +1993,7 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#9f7aea;animation:icF 1s .8s forwards;opacity:0;'>{len(ls_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_i}</div></div></div>"
                 )
-                components.html(inv_html, height=280, scrolling=True)
+                components.html(inv_html, height=260, scrolling=True)
 
         with dc2:
             if red_by_scheme:
@@ -1939,7 +2003,7 @@ def render_dashboard(data):
                     "<div style='background:linear-gradient(135deg,#0c0f1a,#1a0808);"
                     "border:1px solid rgba(252,129,129,0.15);border-radius:16px;padding:18px;'>"
                     "<div style='font-family:Syne,sans-serif;font-size:10px;font-weight:700;color:#fc8181;"
-                    "text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;'>❤️ Where You Redeemed</div>"
+                    "text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;'>❤️ Redeemed (Lumpsum Portion)</div>"
                     "<div style='display:flex;align-items:center;gap:14px;'>"
                     f"<svg width='190' height='190' viewBox='0 0 190 190' style='flex-shrink:0;'>"
                     f"{segs_r}<circle cx='95' cy='95' r='46' fill='#07090f'/>"
@@ -1947,74 +2011,82 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#fc8181;animation:rcF 1s .8s forwards;opacity:0;'>{len(red_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_r}</div></div></div>"
                 )
-                components.html(red_html, height=280, scrolling=True)
+                components.html(red_html, height=260, scrolling=True)
             else:
                 st.markdown(
-                    '<div style="background:rgba(72,187,120,0.06);border:1px solid rgba(72,187,120,0.2);'
+                    '<div style="background:rgba(72,187,120,0.06);border:1px solid rgba(72,187,120,0.2);"'
                     'border-radius:14px;padding:40px;text-align:center;">'
                     '<div style="font-size:32px;margin-bottom:8px;">🎉</div>'
-                    '<div style="font-size:14px;font-weight:700;color:#48bb78;">No Redemptions!</div>'
-                    '<div style="font-size:12px;color:#718096;margin-top:4px;">All your lumpsum investments are still intact.</div>'
+                    '<div style="font-size:14px;font-weight:700;color:#48bb78;">No Lumpsum Redemptions!</div>'
+                    '<div style="font-size:12px;color:#718096;margin-top:4px;">All your lumpsum capital is still invested.</div>'
                     '</div>',
                     unsafe_allow_html=True,
                 )
 
-        # ── Scheme-by-scheme breakdown cards ─────────────────────────────────
-        _dash_section("📋 Scheme-wise Capital Breakdown")
-        all_schemes_l = sorted(set(list(ls_by_scheme.keys()) + list(red_by_scheme.keys())))
-        for scheme in sorted(all_schemes_l, key=lambda s: ls_by_scheme.get(s, 0), reverse=True):
-            inv_a   = ls_by_scheme.get(scheme, 0)
-            red_a   = red_by_scheme.get(scheme, 0)
-            net_a   = inv_a - red_a          # positive = still in, negative = over-redeemed
-            pnl_a   = red_a - inv_a          # actual profit/loss from exits (positive = profit)
-            nc      = "#48bb78" if net_a >= 0 else "#fc8181"
-            pnl_c   = "#48bb78" if pnl_a >= 0 else "#fc8181"
-            red_pct = min((red_a / inv_a * 100) if inv_a else 0, 100)
-            remain  = max(100 - red_pct, 0)
-            status  = "FULLY REDEEMED" if inv_a > 0 and red_a >= inv_a * 0.99 else ("PARTIALLY OUT" if red_a > 0 else "HOLDING")
-            sc      = {"FULLY REDEEMED": "#fc8181", "PARTIALLY OUT": "#f6ad55", "HOLDING": "#48bb78"}[status]
-            net_label = "Still Invested" if net_a >= 0 else "Over-Redeemed"
-            pnl_label = "Profit Booked" if pnl_a >= 0 else "Loss on Exit"
-            st.markdown(
-                f'<div style="background:#0c0f1a;border:1px solid rgba(255,255,255,0.08);'
-                f'border-radius:16px;padding:22px 26px;margin-bottom:14px;">'
-                # Header row
-                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">'
-                f'<div style="font-size:14px;color:#f7fafc;font-weight:700;line-height:1.3;">{clean_name(scheme)}</div>'
-                f'<span style="background:{sc}1a;border:1px solid {sc}55;color:{sc};'
-                f'font-size:9px;font-weight:800;padding:4px 10px;border-radius:20px;'
-                f'letter-spacing:1px;white-space:nowrap;margin-left:12px;">{status}</span></div>'
-                # 4-column stats grid
-                f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:18px;">'
-                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
-                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">💜 Invested</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:#9f7aea;">{fmt_inr(inv_a)}</div></div>'
-                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
-                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">❤️ Redeemed</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:#fc8181;">{fmt_inr(red_a) if red_a else "—"}</div></div>'
-                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
-                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">🏦 {net_label}</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:{nc};">'
-                f'{"▲" if net_a>=0 else "▼"} {fmt_inr(abs(net_a))}</div></div>'
-                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
-                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">📈 {pnl_label}</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:{pnl_c};">'
-                f'{"▲" if pnl_a>=0 else "▼"} {fmt_inr(abs(pnl_a)) if red_a else "—"}</div></div></div>'
-                # Progress bar
-                f'<div style="background:#0a0d14;border-radius:8px;height:10px;overflow:hidden;margin-bottom:6px;">'
-                f'<div style="height:100%;width:{remain:.1f}%;background:linear-gradient(90deg,#9f7aea66,#9f7aea);'
-                f'border-radius:8px;"></div></div>'
-                f'<div style="display:flex;justify-content:space-between;">'
-                f'<span style="font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;">● Remaining {remain:.0f}%</span>'
-                f'<span style="font-size:10px;color:#fc8181;font-family:IBM Plex Mono,monospace;">Redeemed {red_pct:.0f}% ●</span>'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
+        # ── Scheme-by-scheme breakdown cards ─────────────────────────────
+        _dash_section("📋 Scheme-wise Capital Breakdown — Lumpsum Only")
+        if not ls_by_scheme:
+            st.info("No lumpsum purchases found in your portfolio.")
+        else:
+            for scheme in sorted(ls_by_scheme.keys(), key=lambda s: ls_by_scheme.get(s, 0), reverse=True):
+                inv_a    = ls_by_scheme.get(scheme, 0)
+                red_a    = red_by_scheme.get(scheme, 0)        # lumpsum-attributed portion
+                full_red = red_all_by_scheme.get(scheme, 0)    # actual full redemption
+                sip_inv  = sip_by_scheme_l.get(scheme, 0)
+                is_mixed = sip_inv > 0
+                net_a    = inv_a - red_a
+                pnl_a    = red_a - inv_a
+                nc       = "#48bb78" if net_a >= 0 else "#fc8181"
+                pnl_c    = "#48bb78" if pnl_a >= 0 else "#fc8181"
+                red_pct  = min((red_a / inv_a * 100) if inv_a else 0, 100)
+                remain   = max(100 - red_pct, 0)
+                status   = "FULLY REDEEMED" if inv_a > 0 and red_a >= inv_a * 0.99 else ("PARTIALLY OUT" if red_a > 0 else "HOLDING")
+                sc       = {"FULLY REDEEMED": "#fc8181", "PARTIALLY OUT": "#f6ad55", "HOLDING": "#48bb78"}[status]
+                net_label  = "Still Invested" if net_a >= 0 else "Over-Redeemed"
+                pnl_label  = "Profit Booked" if pnl_a >= 0 else "Loss on Exit"
 
+                st.markdown(
+                    f'<div style="background:#0c0f1a;border:1px solid rgba(255,255,255,0.08);"'
+                    f'border-radius:16px;padding:22px 26px;margin-bottom:14px;">'
+                    # Header
+                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">'
+                    f'<div>'
+                    f'<div style="font-size:14px;color:#f7fafc;font-weight:700;line-height:1.3;margin-bottom:4px;">{clean_name(scheme)}</div>'
+                    + (f'<div style="font-size:10px;color:#63b3ed;">🔀 Mixed: also has '
+                       f'{fmt_inr(sip_inv)} SIP investment · redemptions split proportionally</div>' if is_mixed else '') +
+                    f'</div>'
+                    f'<span style="background:{sc}1a;border:1px solid {sc}55;color:{sc};font-size:9px;"'
+                    f'font-weight:800;padding:4px 10px;border-radius:20px;letter-spacing:1px;'
+                    f'white-space:nowrap;margin-left:12px;">{status}</span></div>'
+                    # 4-col stats
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;margin-bottom:16px;">'
+                    f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                    f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">💜 Lumpsum Invested</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:#9f7aea;">{fmt_inr(inv_a)}</div>'
+                    + (f'<div style="font-size:9px;color:#4a5568;margin-top:3px;">+ {fmt_inr(sip_inv)} via SIP</div>' if is_mixed else '') +
+                    f'</div>'
+                    f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                    f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">❤️ Attributed Redemption</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:#fc8181;">{fmt_inr(red_a) if red_a else "—"}</div>'
+                    + (f'<div style="font-size:9px;color:#4a5568;margin-top:3px;">of {fmt_inr(full_red)} total redeemed</div>' if is_mixed and full_red else '') +
+                    f'</div>'
+                    f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                    f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">🏦 {net_label}</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:{nc};">{"▲" if net_a>=0 else "▼"} {fmt_inr(abs(net_a))}</div></div>'
+                    f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                    f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">📈 {pnl_label}</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:{pnl_c};">{"▲" if pnl_a>=0 else "▼"} {fmt_inr(abs(pnl_a)) if red_a else "—"}</div></div></div>'
+                    # Progress bar
+                    f'<div style="background:#0a0d14;border-radius:8px;height:10px;overflow:hidden;margin-bottom:6px;">'
+                    f'<div style="height:100%;width:{remain:.1f}%;background:linear-gradient(90deg,#9f7aea66,#9f7aea);'
+                    f'border-radius:8px;"></div></div>'
+                    f'<div style="display:flex;justify-content:space-between;">'
+                    f'<span style="font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;">● Remaining {remain:.0f}%</span>'
+                    f'<span style="font-size:10px;color:#fc8181;font-family:IBM Plex Mono,monospace;">Redeemed {red_pct:.0f}% ●</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── STP / SWITCH VIEW ────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
     elif view_mode == "↔️ STP / Switch":
         all_tx         = data.get("special_transactions", [])
         stp_out_txs    = [t for t in all_tx if t["Type"] == "STP Out"]
