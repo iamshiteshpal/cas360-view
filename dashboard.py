@@ -908,6 +908,8 @@ def initialize_session_state():
         "live_last_updated": None,
         "family_filter": [],
         "view_family": False,
+        "rtype": "standard",
+        "rsections": {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl"},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -986,7 +988,7 @@ def build_sidebar(data):
 
         if data:
             profiles_count = len(st.session_state.profiles)
-            nav_items = ["Dashboard", "My Portfolio", "SIP Center", "Transactions", "Alerts"]
+            nav_items = ["Dashboard", "💰 P&L Summary", "📄 Report Builder", "My Portfolio", "SIP Center", "Transactions", "Alerts"]
             if profiles_count > 1:
                 nav_items = ["👨‍👩‍👧‍👦 Family"] + nav_items
             menu = st.radio(
@@ -1080,12 +1082,15 @@ def build_sidebar(data):
                 )
 
             st.download_button(
-                "📄 HTML Report (Print as PDF)",
+                "📄 Full HTML Report",
                 data=generate_html(data, live_data),
                 file_name=f"CAS360_{data['investor_name']}.html",
                 mime="text/html",
                 use_container_width=True,
             )
+            if st.button("🎨 Custom Report Builder", use_container_width=True, key="sidebar_report_btn"):
+                st.session_state["nav_override"] = "📄 Report Builder"
+                st.rerun()
         else:
             menu = "upload"
             if st.session_state.profiles:
@@ -3084,6 +3089,519 @@ def render_family_overview():
 
 
 
+
+# ─────────────────────────────────────────────
+# P&L SUMMARY HELPER
+# ─────────────────────────────────────────────
+
+def render_pnl_summary(data, live_data=None):
+    """Full P&L summary: unrealised + realised + total journey."""
+    live_data = live_data or {}
+
+    # ── Compute values ────────────────────────────────────────────────────
+    total_invested  = data["total_invested"]
+    cas_value       = data["total_value"]
+    display_value   = cas_value
+
+    if live_data:
+        display_value = sum(
+            live_data[h["scheme"]]["live_value"]
+            if h["scheme"] in live_data else h["value"]
+            for h in data["holdings"]
+        )
+
+    unrealised_pnl  = display_value - total_invested
+    realised_pnl    = data.get("realized_pnl", 0.0)
+    total_pnl       = unrealised_pnl + realised_pnl
+    ur_pct          = (unrealised_pnl / total_invested * 100) if total_invested else 0
+    total_pct       = (total_pnl / total_invested * 100) if total_invested else 0
+
+    uc = "#48bb78" if unrealised_pnl >= 0 else "#fc8181"
+    rc = "#48bb78" if realised_pnl   >= 0 else "#fc8181"
+    tc = "#48bb78" if total_pnl      >= 0 else "#fc8181"
+
+    st.markdown('<div class="page-title">💰 P&L Summary</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-sub">Complete picture of unrealised gains, realised profits and total return</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Hero KPI row ──────────────────────────────────────────────────────
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1: st.metric("Total Invested",  fmt_inr(total_invested))
+    with k2: st.metric("Current Value",   fmt_inr(display_value),
+                        delta="🟢 Live" if live_data else "CAS Value")
+    with k3: st.metric("Unrealised P&L",  fmt_inr(unrealised_pnl),
+                        delta=f"{'▲' if ur_pct>=0 else '▼'} {abs(ur_pct):.2f}% all-time")
+    with k4: st.metric("Realised P&L",    fmt_inr(realised_pnl),
+                        delta=f"{len(data.get('redeemed', []))} exits")
+    with k5: st.metric("Total P&L",       fmt_inr(total_pnl),
+                        delta=f"{'▲' if total_pct>=0 else '▼'} {abs(total_pct):.2f}% overall")
+
+    # ── Visual waterfall: Invested → Unrealised → Realised → Total ───────
+    st.markdown('<div class="section-sep" style="margin:24px 0 14px;">📊 P&L Waterfall</div>',
+                unsafe_allow_html=True)
+    fig_wf = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "total"],
+        x=["Invested", "Unrealised Gain/Loss", "Realised Gain/Loss", "Total Worth"],
+        y=[total_invested, unrealised_pnl, realised_pnl, 0],
+        text=[fmt_inr(total_invested),
+              f"{'▲' if unrealised_pnl>=0 else '▼'} {fmt_inr(unrealised_pnl)}",
+              f"{'▲' if realised_pnl>=0 else '▼'} {fmt_inr(realised_pnl)}",
+              fmt_inr(total_invested + total_pnl)],
+        textposition="outside",
+        increasing=dict(marker_color="#48bb78"),
+        decreasing=dict(marker_color="#fc8181"),
+        totals=dict(marker_color="#63b3ed"),
+        connector=dict(line=dict(color="rgba(255,255,255,0.1)", width=1, dash="dot")),
+    ))
+    fig_wf.update_layout(
+        height=320, showlegend=False,
+        xaxis=dict(tickfont=dict(size=12, color="#718096")),
+        yaxis=dict(showgrid=True, gridcolor=GRID, tickfont=dict(size=10, color="#718096"), visible=False),
+        **PLOT_BASE,
+    )
+    st.plotly_chart(fig_wf, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Per-scheme unrealised P&L ─────────────────────────────────────────
+    st.markdown('<div class="section-sep" style="margin:24px 0 14px;">📈 Unrealised P&L — Per Scheme</div>',
+                unsafe_allow_html=True)
+    holdings_sorted = sorted(data["holdings"], key=lambda x: x["pnl"], reverse=True)
+    if holdings_sorted:
+        ur_rows = []
+        for h in holdings_sorted:
+            lv = live_data.get(h["scheme"], {}).get("live_value", h["value"])
+            curr_pnl = lv - h["invested"]
+            pnl_pct  = (curr_pnl / h["invested"] * 100) if h["invested"] else 0
+            ur_rows.append({
+                "Scheme":    clean_name(h["scheme"]),
+                "Invested":  fmt_inr(h["invested"]),
+                "SIP":       fmt_inr(h.get("sip_invested", 0)),
+                "Lumpsum":   fmt_inr(h.get("lumpsum_invested", 0)),
+                "Value":     fmt_inr(lv),
+                "P&L":       f"{'▲' if curr_pnl>=0 else '▼'} {fmt_inr(curr_pnl)}",
+                "Return %":  f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.2f}%",
+                "XIRR %":   f"{h['xirr']:.2f}%",
+            })
+        st.dataframe(pd.DataFrame(ur_rows), use_container_width=True, hide_index=True)
+
+    # ── Realised P&L (fully exited) ───────────────────────────────────────
+    redeemed = data.get("redeemed", [])
+    st.markdown('<div class="section-sep" style="margin:24px 0 14px;">🏦 Realised P&L — Fully Exited Positions</div>',
+                unsafe_allow_html=True)
+    if redeemed:
+        total_r_inv = sum(r["invested"] for r in redeemed)
+        total_r_red = sum(r["redeemed"] for r in redeemed)
+        total_r_pnl = total_r_red - total_r_inv
+
+        rr1, rr2, rr3 = st.columns(3)
+        with rr1:
+            st.markdown(
+                f'<div style="background:#0c0f1a;border:1px solid rgba(159,122,234,0.2);border-radius:12px;padding:16px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">Total Invested (Exited)</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:18px;font-weight:700;color:#9f7aea;">{fmt_inr(total_r_inv)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with rr2:
+            st.markdown(
+                f'<div style="background:#0c0f1a;border:1px solid rgba(99,179,237,0.2);border-radius:12px;padding:16px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">Total Redeemed (Received)</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:18px;font-weight:700;color:#63b3ed;">{fmt_inr(total_r_red)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with rr3:
+            pnl_c3 = "#48bb78" if total_r_pnl >= 0 else "#fc8181"
+            st.markdown(
+                f'<div style="background:#0c0f1a;border:1px solid {pnl_c3}33;border-radius:12px;padding:16px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">Net Profit / Loss</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:18px;font-weight:700;color:{pnl_c3};">{"▲" if total_r_pnl>=0 else "▼"} {fmt_inr(abs(total_r_pnl))}</div></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # Per-exit card
+        for r in sorted(redeemed, key=lambda x: x["profit"], reverse=True):
+            profit   = r["profit"]
+            ret_pct  = (profit / r["invested"] * 100) if r["invested"] else 0
+            pc       = "#48bb78" if profit >= 0 else "#fc8181"
+            pb       = f"rgba(72,187,120,0.08)" if profit >= 0 else "rgba(252,129,129,0.08)"
+            pbrd     = f"rgba(72,187,120,0.2)"  if profit >= 0 else "rgba(252,129,129,0.2)"
+            st.markdown(
+                f'<div style="background:{pb};border:1px solid {pbrd};border-radius:12px;'
+                f'padding:16px 20px;margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+                f'<div style="font-size:13px;font-weight:700;color:#f7fafc;">{clean_name(r["scheme"])}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:14px;font-weight:700;color:{pc};">'
+                f'{"▲" if profit>=0 else "▼"} {fmt_inr(profit)}&nbsp;'
+                f'<span style="font-size:11px;opacity:.7;">({abs(ret_pct):.1f}%)</span></div></div>'
+                f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+                f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Invested</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;color:#9f7aea;font-weight:600;">{fmt_inr(r["invested"])}</div></div>'
+                f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Redeemed</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;color:#63b3ed;font-weight:600;">{fmt_inr(r["redeemed"])}</div></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            '<div style="background:rgba(99,179,237,0.05);border:1px solid rgba(99,179,237,0.15);"'
+            'border-radius:12px;padding:24px;text-align:center;">'
+            '<div style="font-size:13px;color:#718096;">No fully exited positions yet. '
+            'Realised P&L will appear here when you redeem a scheme completely.</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Recent redemptions timeline ───────────────────────────────────────
+    recent = data.get("recent_redemptions", [])
+    if recent:
+        st.markdown(
+            '<div class="section-sep" style="margin:24px 0 14px;">🕐 Recent Redemptions Timeline</div>',
+            unsafe_allow_html=True,
+        )
+        for r in recent[:10]:
+            st.markdown(
+                f'<div style="background:#0c0f1a;border:1px solid rgba(252,129,129,0.15);"'
+                f'border-left:3px solid #fc8181;border-radius:0 10px 10px 0;"'
+                f'padding:10px 16px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
+                f'<div><div style="font-size:12px;color:#e2e8f0;font-weight:500;">{r["Scheme"]}</div>'
+                f'<div style="font-size:10px;color:#718096;margin-top:2px;">{r["Date"]}</div></div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#fc8181;">{fmt_inr(r["Payout"])}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+# ─────────────────────────────────────────────
+# CUSTOM REPORT BUILDER
+# ─────────────────────────────────────────────
+
+def generate_custom_html(d, sections, report_type, live_data=None):
+    """Generate a custom HTML report based on selected sections."""
+    live_data  = live_data or {}
+    dv         = d["total_value"]
+    if live_data:
+        dv = sum(live_data[h["scheme"]]["live_value"] if h["scheme"] in live_data
+                 else h["value"] for h in d["holdings"])
+    display_pnl = dv - d["total_invested"]
+    realized    = d.get("realized_pnl", 0.0)
+    total_pnl   = display_pnl + realized
+    live_hdr    = " — 🟢 LIVE DATA ACTIVE" if live_data else ""
+
+    css = """
+    <style>
+    @media print{body{background:#07090f!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+    *{box-sizing:border-box;}
+    body{background:#07090f;color:#e2e8f0;font-family:'Helvetica Neue',Helvetica,sans-serif;
+         padding:32px;line-height:1.6;max-width:1100px;margin:0 auto;}
+    h1{font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px;}
+    h2{font-size:13px;font-weight:700;color:#63b3ed;text-transform:uppercase;letter-spacing:2px;
+       border-left:3px solid #63b3ed;padding-left:10px;margin:32px 0 14px;}
+    .badge{display:inline-block;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.3);
+           color:#63b3ed;font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:1px;}
+    .sub{font-size:12px;color:#718096;margin-bottom:24px;}
+    .card{background:#0c0f1a;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:22px;margin-bottom:20px;}
+    .grid{display:grid;gap:12px;margin:16px 0;}
+    .grid-5{grid-template-columns:repeat(5,1fr);}
+    .grid-4{grid-template-columns:repeat(4,1fr);}
+    .grid-3{grid-template-columns:repeat(3,1fr);}
+    .grid-2{grid-template-columns:repeat(2,1fr);}
+    .kpi{background:#111627;border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:14px 16px;}
+    .kpi-lbl{font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:5px;}
+    .kpi-val{font-size:18px;font-weight:700;font-family:monospace;color:#fff;}
+    .kpi-sub{font-size:10px;color:#4a5568;margin-top:4px;}
+    table{width:100%;border-collapse:collapse;border:1px solid rgba(255,255,255,0.07);
+          border-radius:10px;overflow:hidden;margin:10px 0;}
+    th{background:#111627;color:#9f7aea;font-size:10px;font-weight:700;text-transform:uppercase;
+       letter-spacing:1px;padding:11px 14px;text-align:left;}
+    td{background:#0c0f1a;color:#e2e8f0;font-size:12px;padding:11px 14px;
+       border-bottom:1px solid rgba(255,255,255,0.04);}
+    tr:nth-child(even) td{background:#0d1020;}
+    .gain{color:#48bb78;font-weight:600;}
+    .loss{color:#fc8181;font-weight:600;}
+    .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;}
+    .pill-green{background:rgba(72,187,120,0.1);border:1px solid rgba(72,187,120,0.3);color:#48bb78;}
+    .pill-red{background:rgba(252,129,129,0.1);border:1px solid rgba(252,129,129,0.3);color:#fc8181;}
+    .pill-yellow{background:rgba(246,173,85,0.1);border:1px solid rgba(246,173,85,0.3);color:#f6ad55;}
+    .footer{text-align:center;font-size:10px;color:#2d3748;border-top:1px solid rgba(255,255,255,0.05);
+            padding-top:14px;margin-top:40px;}
+    .info-box{background:rgba(99,179,237,0.05);border:1px solid rgba(99,179,237,0.15);
+              border-left:3px solid #63b3ed;border-radius:0 10px 10px 0;padding:12px 16px;
+              font-size:12px;color:#718096;margin-bottom:16px;}
+    </style>"""
+
+    try:
+        stmt = to_date(d["statement_date"]).strftime("%d %b %Y")
+    except Exception:
+        stmt = d["statement_date"]
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>CAS 360 Report — {d['investor_name'].title()}</title>{css}</head><body>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div>
+          <h1>CAS 360 VIEW</h1>
+          <div class="sub">Portfolio Report{live_hdr} &nbsp;·&nbsp; {stmt}</div>
+          <span class="badge">{report_type.upper()} REPORT</span>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;color:#718096;">Investor</div>
+          <div style="font-size:16px;font-weight:700;color:#f7fafc;">{d['investor_name'].title()}</div>
+          <div style="font-size:11px;color:#718096;margin-top:2px;">{d.get('investor_email','')}</div>
+          <div style="font-size:11px;color:#9f7aea;font-family:monospace;margin-top:2px;">{d.get('investor_pan','—')}</div>
+        </div>
+      </div>
+    </div>"""
+
+    # ── SECTION: Overall Summary ───────────────────────────────────────
+    if "overall_summary" in sections:
+        html += f"""<h2>Overall Summary</h2>
+        <div class="grid grid-5">
+          <div class="kpi"><div class="kpi-lbl">Total Wealth</div>
+            <div class="kpi-val" style="color:#63b3ed;">{fmt_inr(dv)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Total Invested</div>
+            <div class="kpi-val" style="color:#9f7aea;">{fmt_inr(d['total_invested'])}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Unrealised P&L</div>
+            <div class="kpi-val" style="color:{'#48bb78' if display_pnl>=0 else '#fc8181'};">
+            {'▲' if display_pnl>=0 else '▼'} {fmt_inr(display_pnl)}</div>
+            <div class="kpi-sub">{'▲' if display_pnl>=0 else '▼'} {abs((display_pnl/d['total_invested']*100) if d['total_invested'] else 0):.2f}% all-time</div></div>
+          <div class="kpi"><div class="kpi-lbl">Realised P&L</div>
+            <div class="kpi-val" style="color:{'#48bb78' if realized>=0 else '#fc8181'};">
+            {'▲' if realized>=0 else '▼'} {fmt_inr(realized)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Total P&L</div>
+            <div class="kpi-val" style="color:{'#48bb78' if total_pnl>=0 else '#fc8181'};">
+            {'▲' if total_pnl>=0 else '▼'} {fmt_inr(total_pnl)}</div>
+            <div class="kpi-sub">{'▲' if total_pnl>=0 else '▼'} {abs((total_pnl/d['total_invested']*100) if d['total_invested'] else 0):.2f}% overall</div></div>
+        </div>"""
+
+    # ── SECTION: Holdings ─────────────────────────────────────────────
+    if "holdings" in sections and d.get("holdings"):
+        html += "<h2>Active Holdings</h2><table><thead><tr>"
+        cols = ["Scheme","Category","SIP Invested","Lumpsum","Total Invested","Value","P&L","Return %","XIRR %"]
+        for c in cols: html += f"<th>{c}</th>"
+        html += "</tr></thead><tbody>"
+        for h in sorted(d["holdings"], key=lambda x: x["value"], reverse=True):
+            lv   = live_data.get(h["scheme"], {}).get("live_value", h["value"])
+            pnl  = lv - h["invested"]
+            pct  = (pnl/h["invested"]*100) if h["invested"] else 0
+            cls  = "gain" if pnl >= 0 else "loss"
+            html += (f"<tr><td>{clean_name(h['scheme'])}</td><td>{h['category']}</td>"
+                     f"<td>{fmt_inr(h.get('sip_invested',0))}</td>"
+                     f"<td>{fmt_inr(h.get('lumpsum_invested',0))}</td>"
+                     f"<td>{fmt_inr(h['invested'])}</td><td>{fmt_inr(lv)}</td>"
+                     f"<td class='{cls}'>{'▲' if pnl>=0 else '▼'} {fmt_inr(pnl)}</td>"
+                     f"<td class='{cls}'>{'▲' if pct>=0 else '▼'} {abs(pct):.1f}%</td>"
+                     f"<td class='{cls}'>{h['xirr']:.2f}%</td></tr>")
+        html += "</tbody></table>"
+
+    # ── SECTION: SIP Details ──────────────────────────────────────────
+    if "sip_details" in sections:
+        live_sips = d.get("live_sips", [])
+        dead_sips = d.get("dead_sips", [])
+        sip_monthly = sum(s["amount"] for s in live_sips)
+        html += f"""<h2>SIP Registry</h2>
+        <div class="grid grid-3" style="margin-bottom:16px;">
+          <div class="kpi"><div class="kpi-lbl">Total SIP Invested</div>
+            <div class="kpi-val" style="color:#63b3ed;">{fmt_inr(d.get('total_sip_invested',0))}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Monthly SIP</div>
+            <div class="kpi-val" style="color:#48bb78;">{fmt_inr(sip_monthly)}</div>
+            <div class="kpi-sub">{len(live_sips)} active</div></div>
+          <div class="kpi"><div class="kpi-lbl">Inactive SIPs</div>
+            <div class="kpi-val" style="color:#f6ad55;">{len(dead_sips)}</div></div>
+        </div>
+        <table><thead><tr><th>Scheme</th><th>Amount</th><th>Day</th><th>Last Date</th><th>Next Due</th><th>Status</th></tr></thead><tbody>"""
+        for s in sorted(live_sips + dead_sips, key=lambda x: x["amount"], reverse=True):
+            sc = "gain" if s["status"] == "Live" else "loss"
+            pill_cls = "pill-green" if s["status"] == "Live" else "pill-red"
+            html += (f"<tr><td>{clean_name(s['scheme'])}</td>"
+                     f"<td style='font-family:monospace;'>{fmt_inr(s['amount'])}</td>"
+                     f"<td>{s['day_label']}</td><td>{s['last_date']}</td>"
+                     f"<td>{s.get('next_date','—')}</td>"
+                     f"<td><span class='pill {pill_cls}'>{s['status'].upper()}</span></td></tr>")
+        html += "</tbody></table>"
+
+    # ── SECTION: Unrealised P&L ───────────────────────────────────────
+    if "unrealised_pnl" in sections and d.get("holdings"):
+        html += "<h2>Unrealised P&L — Per Scheme</h2><table><thead><tr>"
+        for c in ["Scheme","Invested","Current Value","P&L","Return %","XIRR %"]: html += f"<th>{c}</th>"
+        html += "</tr></thead><tbody>"
+        for h in sorted(d["holdings"], key=lambda x: x["pnl"], reverse=True):
+            lv  = live_data.get(h["scheme"], {}).get("live_value", h["value"])
+            pnl = lv - h["invested"]
+            pct = (pnl/h["invested"]*100) if h["invested"] else 0
+            cls = "gain" if pnl >= 0 else "loss"
+            html += (f"<tr><td>{clean_name(h['scheme'])}</td><td>{fmt_inr(h['invested'])}</td>"
+                     f"<td>{fmt_inr(lv)}</td>"
+                     f"<td class='{cls}'>{'▲' if pnl>=0 else '▼'} {fmt_inr(pnl)}</td>"
+                     f"<td class='{cls}'>{'▲' if pct>=0 else '▼'} {abs(pct):.1f}%</td>"
+                     f"<td class='{cls}'>{h['xirr']:.2f}%</td></tr>")
+        html += "</tbody></table>"
+
+    # ── SECTION: Realised P&L ─────────────────────────────────────────
+    if "realised_pnl" in sections:
+        redeemed = d.get("redeemed", [])
+        if redeemed:
+            total_r_pnl = sum(r["profit"] for r in redeemed)
+            html += f"""<h2>Realised P&L — Fully Exited Positions</h2>
+            <div class="info-box">Total profit/loss from {len(redeemed)} fully exited positions:
+            <strong style="color:{'#48bb78' if total_r_pnl>=0 else '#fc8181'};">
+            {'▲' if total_r_pnl>=0 else '▼'} {fmt_inr(abs(total_r_pnl))}</strong></div>
+            <table><thead><tr><th>Scheme</th><th>Invested</th><th>Redeemed</th><th>Profit/Loss</th><th>Return %</th></tr></thead><tbody>"""
+            for r in sorted(redeemed, key=lambda x: x["profit"], reverse=True):
+                p   = r["profit"]
+                pct = (p/r["invested"]*100) if r["invested"] else 0
+                cls = "gain" if p >= 0 else "loss"
+                html += (f"<tr><td>{clean_name(r['scheme'])}</td>"
+                         f"<td>{fmt_inr(r['invested'])}</td><td>{fmt_inr(r['redeemed'])}</td>"
+                         f"<td class='{cls}'>{'▲' if p>=0 else '▼'} {fmt_inr(p)}</td>"
+                         f"<td class='{cls}'>{'▲' if pct>=0 else '▼'} {abs(pct):.1f}%</td></tr>")
+            html += "</tbody></table>"
+        else:
+            html += "<h2>Realised P&L</h2><p style='color:#718096;'>No fully exited positions.</p>"
+
+    # ── SECTION: Special Transactions ─────────────────────────────────
+    if "special_tx" in sections:
+        spec = [t for t in d.get("special_transactions", []) if t["Type"] in SPECIAL_TX_TYPES]
+        if spec:
+            html += "<h2>Special Transactions</h2><table><thead><tr>"
+            for c in ["Date","Scheme","Type","Amount","Units"]: html += f"<th>{c}</th>"
+            html += "</tr></thead><tbody>"
+            for t in spec[:50]:
+                meta = TX_META.get(t["Type"], TX_META["Other"])
+                html += (f"<tr><td>{t['Date']}</td><td>{t['Scheme']}</td>"
+                         f"<td style='color:{meta['color']};font-weight:600;'>{meta['icon']} {t['Type']}</td>"
+                         f"<td>{fmt_inr(t['Amount'])}</td>"
+                         f"<td style='font-family:monospace;'>{t['Units']:+.3f}</td></tr>")
+            html += "</tbody></table>"
+
+    # ── SECTION: Asset Allocation ─────────────────────────────────────
+    if "allocation" in sections and d.get("alloc_pct"):
+        html += "<h2>Asset Allocation</h2><table><thead><tr><th>Asset Class</th><th>Value</th><th>Allocation %</th></tr></thead><tbody>"
+        for ac, pct in d["alloc_pct"].items():
+            val = d["alloc_values"].get(ac, 0)
+            html += f"<tr><td>{ac}</td><td>{fmt_inr(val)}</td><td>{pct:.1f}%</td></tr>"
+        html += "</tbody></table>"
+
+    html += f'<div class="footer">Generated by CAS 360 View &nbsp;·&nbsp; {stmt} &nbsp;·&nbsp; Confidential</div></body></html>'
+    return html
+
+
+def render_custom_report(data):
+    """Interactive custom report builder page."""
+    live_data = st.session_state.get("live_data", {})
+
+    st.markdown('<div class="page-title">📄 Custom Report Builder</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-sub">Choose exactly what goes into your PDF report</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Step 1: Report type ───────────────────────────────────────────────
+    st.markdown(
+        '<div class="section-sep" style="margin:8px 0 16px;">Step 1 — Choose Report Style</div>',
+        unsafe_allow_html=True,
+    )
+    rt1, rt2, rt3 = st.columns(3)
+    with rt1:
+        if st.button("⚡ Basic\nKey numbers only", use_container_width=True,
+                     key="rtype_basic",
+                     type="primary" if st.session_state.get("rtype") == "basic" else "secondary"):
+            st.session_state.rtype = "basic"
+            st.session_state.rsections = {"overall_summary", "sip_details", "unrealised_pnl"}
+            st.rerun()
+    with rt2:
+        if st.button("📊 Standard\nHoldings + SIP + P&L", use_container_width=True,
+                     key="rtype_standard",
+                     type="primary" if st.session_state.get("rtype") == "standard" else "secondary"):
+            st.session_state.rtype = "standard"
+            st.session_state.rsections = {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl","allocation"}
+            st.rerun()
+    with rt3:
+        if st.button("🔬 Advanced\nEverything included", use_container_width=True,
+                     key="rtype_advanced",
+                     type="primary" if st.session_state.get("rtype") == "advanced" else "secondary"):
+            st.session_state.rtype = "advanced"
+            st.session_state.rsections = {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl","allocation","special_tx"}
+            st.rerun()
+
+    if "rsections" not in st.session_state:
+        st.session_state.rsections = {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl"}
+    if "rtype" not in st.session_state:
+        st.session_state.rtype = "custom"
+
+    # ── Step 2: Custom section checkboxes ─────────────────────────────────
+    st.markdown(
+        '<div class="section-sep" style="margin:24px 0 16px;">Step 2 — Customise Sections</div>',
+        unsafe_allow_html=True,
+    )
+
+    SECTION_DEFS = [
+        ("overall_summary", "📊 Overall Summary",  "Total wealth, invested, P&L, realized — the headline numbers"),
+        ("holdings",        "📋 Active Holdings",   "All current schemes with value, P&L, XIRR"),
+        ("sip_details",     "🔄 SIP Details",       "Active/inactive SIPs, monthly amount, next due dates"),
+        ("unrealised_pnl",  "📈 Unrealised P&L",    "Gain/loss on current holdings, return %, XIRR per scheme"),
+        ("realised_pnl",    "🏦 Realised P&L",      "Profit/loss from fully exited positions"),
+        ("allocation",      "🍩 Asset Allocation",   "Equity vs Debt split with values"),
+        ("special_tx",      "⚡ Special Transactions", "STP, Switch, SWP, Reversals history"),
+    ]
+
+    cc1, cc2 = st.columns(2)
+    for i, (key, label, desc) in enumerate(SECTION_DEFS):
+        col = cc1 if i % 2 == 0 else cc2
+        with col:
+            checked = key in st.session_state.rsections
+            new_val = st.checkbox(label, value=checked, key=f"rchk_{key}",
+                                  help=desc)
+            if new_val and key not in st.session_state.rsections:
+                st.session_state.rsections.add(key)
+            elif not new_val and key in st.session_state.rsections:
+                st.session_state.rsections.discard(key)
+
+    # ── Step 3: Preview & Generate ────────────────────────────────────────
+    st.markdown(
+        '<div class="section-sep" style="margin:24px 0 16px;">Step 3 — Preview & Download</div>',
+        unsafe_allow_html=True,
+    )
+
+    selected_sections = list(st.session_state.get("rsections", set()))
+    rtype             = st.session_state.get("rtype", "Custom")
+
+    # Preview summary of what will be included
+    if selected_sections:
+        preview_items = [label for key, label, _ in SECTION_DEFS if key in selected_sections]
+        st.markdown(
+            f'<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.15);"'
+            f'border-radius:12px;padding:14px 18px;margin-bottom:16px;">'
+            f'<div style="font-size:11px;font-weight:700;color:#63b3ed;margin-bottom:8px;">'
+            f'✅ Your {rtype.upper()} Report will include {len(selected_sections)} sections:</div>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:6px;">'
+            + "".join(f'<span style="background:#111627;border:1px solid rgba(255,255,255,0.08);'
+                      f'color:#e2e8f0;font-size:11px;padding:3px 10px;border-radius:20px;">{p}</span>'
+                      for p in preview_items)
+            + '</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        report_html = generate_custom_html(data, selected_sections, rtype, live_data)
+        st.download_button(
+            label=f"⬇️ Download {rtype.title()} Report (Print as PDF)",
+            data=report_html,
+            file_name=f"CAS360_{data['investor_name'].replace(' ','_')}_{rtype}_report.html",
+            mime="text/html",
+            use_container_width=True,
+            type="primary",
+        )
+        st.markdown(
+            '<div style="font-size:11px;color:#4a5568;text-align:center;margin-top:8px;">'
+            '💡 Open the downloaded file in Chrome/Edge → Press Ctrl+P → Save as PDF</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("Select at least one section above to generate a report.")
+
+
+
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
@@ -3097,10 +3615,17 @@ def run_app():
     if not active:
         show_upload()
         st.stop()
+    # sidebar shortcut override
+    if st.session_state.get("nav_override"):
+        menu = st.session_state.pop("nav_override")
     if menu == "👨‍👩‍👧‍👦 Family":
         render_family_overview()
     elif menu == "Dashboard":
         render_dashboard(active)
+    elif menu == "💰 P&L Summary":
+        render_pnl_summary(active, st.session_state.get("live_data",{}))
+    elif menu == "📄 Report Builder":
+        render_custom_report(active)
     elif menu == "My Portfolio":
         render_my_portfolio(active)
     elif menu == "SIP Center":
