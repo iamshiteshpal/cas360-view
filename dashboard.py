@@ -1247,7 +1247,7 @@ def render_dashboard(data):
             f"<div style='font-size:10px;color:{score_color};font-weight:600;'>{score_label}</div></div>"
             f"</div></div></div>"
         )
-        components.html(kpi_html, height=128, scrolling=False)
+        components.html(kpi_html, height=140, scrolling=False)
 
         # ── ANIMATED SIP vs LUMP BAR ─────────────────────────────────────────
         split_html = (
@@ -1373,7 +1373,7 @@ def render_dashboard(data):
                 f"<div style='flex:1;'>{legend_html}</div>"
                 "</div></div>"
             )
-            components.html(donut_html, height=268, scrolling=False)
+            components.html(donut_html, height=280, scrolling=True)
 
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -1452,7 +1452,7 @@ def render_dashboard(data):
                         f'setInterval(tick,30000);tick();}})();</script>'
                     )
                 ticker_html += "</div>"
-                components.html(ticker_html, height=130, scrolling=False)
+                components.html(ticker_html, height=140, scrolling=False)
                 st.dataframe(pd.DataFrame([
                     {"Scheme": clean_name(s["scheme"]), "Amount": fmt_inr(s["amount"]),
                      "Day": s["day_label"], "Next": s["next_date"]}
@@ -1658,7 +1658,7 @@ def render_dashboard(data):
                 f"animation:cFade 1s 1s forwards;opacity:0;'>hover to inspect</text>"
                 f"</svg><div style='flex:1;'>{leg}</div></div></div>"
             )
-            components.html(donut_html, height=310, scrolling=False)
+            components.html(donut_html, height=340, scrolling=True)
 
         with col_b:
             # Animated radial bars with % labels
@@ -1697,7 +1697,7 @@ def render_dashboard(data):
                 "text-transform:uppercase;letter-spacing:2px;margin-bottom:16px;'>📊 SIP Amount Ranking</div>"
                 f"{bars_inner}</div>"
             )
-            components.html(bars_html, height=300, scrolling=False)
+            components.html(bars_html, height=340, scrolling=True)
 
         # ── ROW 2: Live SIP cards  ────────────────────────────────────────────
         _dash_section("✅ Live SIPs — Active Mandates")
@@ -1916,7 +1916,7 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#9f7aea;animation:icF 1s .8s forwards;opacity:0;'>{len(ls_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_i}</div></div></div>"
                 )
-                components.html(inv_html, height=260, scrolling=False)
+                components.html(inv_html, height=280, scrolling=True)
 
         with dc2:
             if red_by_scheme:
@@ -1934,7 +1934,7 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#fc8181;animation:rcF 1s .8s forwards;opacity:0;'>{len(red_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_r}</div></div></div>"
                 )
-                components.html(red_html, height=260, scrolling=False)
+                components.html(red_html, height=280, scrolling=True)
             else:
                 st.markdown(
                     '<div style="background:rgba(72,187,120,0.06);border:1px solid rgba(72,187,120,0.2);'
@@ -2094,7 +2094,7 @@ def render_dashboard(data):
                     f"animation:fIn .9s ease .2s forwards;'></div></div></div>"
                 )
             flow_html += "</div></div></div>"
-            components.html(flow_html, height=max(220, max(len(out_items), len(in_items)) * 60 + 60), scrolling=False)
+            components.html(flow_html, height=max(260, max(len(out_items), len(in_items)) * 65 + 80), scrolling=True)
 
         # ── Switch flow ───────────────────────────────────────────────────────
         if switch_out_txs or switch_in_txs:
@@ -2243,7 +2243,7 @@ def render_dashboard(data):
                     f"<text x='{cxr}' y='{cyr+4}' text-anchor='middle' style='font-size:9px;fill:#718096;'>redeemed</text>"
                     f"</svg><div style='flex:1;'>{leg_r}</div></div></div>"
                 )
-                components.html(rd_html, height=220, scrolling=False)
+                components.html(rd_html, height=260, scrolling=True)
             else:
                 st.info("No redemptions found.")
 
