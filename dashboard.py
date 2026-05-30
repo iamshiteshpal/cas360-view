@@ -907,10 +907,6 @@ def initialize_session_state():
         "live_data": {},
         "live_last_updated": None,
         "family_filter": [],
-        "coupon_ok": False,
-        "user_registered": False,
-        "reg_name": "",
-        "reg_email": "",
         "view_family": False,
         "rtype": "standard",
         "rsections": {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl"},
@@ -926,253 +922,49 @@ def active_data():
 
 
 # ─────────────────────────────────────────────
-# VALID COUPON CODES
-# ─────────────────────────────────────────────
-
-VALID_COUPONS = {
-    "CAS360-XAJI0Y", "CAS360-6H3CSP", "CAS360-A8AL23", "CAS360-ITXNZ4",
-    "CAS360-ABRP0M", "CAS360-58SZ6F", "CAS360-LRMH1D", "CAS360-2C15D6",
-    "CAS360-KTKEXQ", "CAS360-X7VJ2Z", "CAS360-3BX7FE", "CAS360-SSE6AX",
-    "CAS360-HBJPTG", "CAS360-KAYM27", "CAS360-JNL6OV", "CAS360-C2DJHH",
-    "CAS360-25DSVW", "CAS360-9SV5YI", "CAS360-F8FHV9", "CAS360-6GOLJL",
-    # also accept the master override (for admin/testing)
-    "CAS360-ADMIN",
-}
-
-
-# ─────────────────────────────────────────────
 # UPLOAD SCREEN
 # ─────────────────────────────────────────────
 
 def show_upload():
-    # ── Gate check ────────────────────────────────────────────────────────
-    is_unlocked = st.session_state.get("coupon_ok", False)
-
-    # ── Page header ───────────────────────────────────────────────────────
     st.markdown(
         """
-        <div style="display:flex;flex-direction:column;align-items:center;padding-top:36px;">
-          <div style="font-family:'Syne',sans-serif;font-size:32px;font-weight:800;
-                      color:#f7fafc;letter-spacing:-0.5px;margin-bottom:6px;text-align:center;">
-            CAS 360 <span style="color:#63b3ed;">View</span>
+        <div style="display:flex;justify-content:center;padding-top:48px;">
+          <div style="max-width:520px;width:100%;text-align:center;">
+            <div style="width:64px;height:64px;background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.2);
+                        border-radius:18px;display:flex;align-items:center;justify-content:center;
+    margin:0 auto 22px;font-size:28px;">📂</div>
+            <div style="font-family:'Syne',sans-serif;font-size:28px;font-weight:800;color:#f7fafc;
+    letter-spacing:-0.5px;margin-bottom:8px;">Upload your CAS PDF</div>
+            <div style="font-size:14px;color:#718096;margin-bottom:32px;line-height:1.7;">
+              Consolidated Account Statement from CAMS or KFintech.<br>
+              Your data never leaves your device.
+            </div>
           </div>
-          <div style="font-size:13px;color:#4a5568;text-transform:uppercase;letter-spacing:2.5px;
-                      font-weight:600;margin-bottom:32px;">Portfolio Intelligence</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ── Two column layout: left = how-to guide, right = upload ───────────
-    left, right = st.columns([1, 1], gap="large")
-
-    # ────────────────────────────────────────────
-    # LEFT: How to get your CAS
-    # ────────────────────────────────────────────
-    with left:
-        st.markdown(
-            """
-            <div style="background:linear-gradient(135deg,#0c0f1a,#0d1020);
-                        border:1px solid rgba(99,179,237,0.15);border-radius:18px;padding:28px 26px;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-                <div style="width:32px;height:32px;background:rgba(99,179,237,0.12);
-                            border:1px solid rgba(99,179,237,0.25);border-radius:10px;
-                            display:flex;align-items:center;justify-content:center;font-size:16px;">ℹ️</div>
-                <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;
-                            color:#63b3ed;text-transform:uppercase;letter-spacing:1.5px;">
-                  How to get your CAS PDF</div>
-              </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        steps = [
-            ("1", "#63b3ed", "Visit camsonline.com",
-             "Go to <b>MF Investor Services → Statements → CAS</b>"),
-            ("2", "#9f7aea", "Configure the statement",
-             'Select <b>Statement Type: Detailed</b><br>'
-             'Set date range: <b>01/01/1991 → Today</b><br>'
-             'Check <b>"Zero balance folios"</b>'),
-            ("3", "#48bb78", "Check your email",
-             "You'll receive the <b>password-protected PDF</b> in your inbox within minutes."),
-            ("4", "#f6ad55", "Upload here",
-             "Come back and upload the PDF. Use your <b>PAN number or date of birth</b> as the password."),
-        ]
-
-        for num, color, title, body in steps:
-            st.markdown(
-                f"""
-                <div style="display:flex;gap:14px;margin-bottom:18px;">
-                  <div style="flex-shrink:0;width:28px;height:28px;background:{color}18;
-                              border:1px solid {color}44;border-radius:50%;display:flex;
-                              align-items:center;justify-content:center;
-                              font-family:'IBM Plex Mono',monospace;font-size:11px;
-                              font-weight:700;color:{color};">{num}</div>
-                  <div>
-                    <div style="font-size:13px;font-weight:700;color:#f7fafc;margin-bottom:3px;">{title}</div>
-                    <div style="font-size:12px;color:#718096;line-height:1.6;">{body}</div>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        st.markdown(
-            """
-              <div style="background:rgba(246,173,85,0.06);border:1px solid rgba(246,173,85,0.2);
-                          border-radius:10px;padding:10px 14px;margin-top:4px;">
-                <div style="font-size:11px;color:#f6ad55;font-weight:600;margin-bottom:3px;">
-                  💡 Need help?</div>
-                <div style="font-size:11px;color:#718096;line-height:1.6;">
-                  Your data is processed entirely on your device — nothing is stored on any server.
-                  We never see your portfolio data.
-                </div>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # ────────────────────────────────────────────
-    # RIGHT: Sign-up + Coupon gate + Upload
-    # ────────────────────────────────────────────
-    with right:
-
-        # ── STEP A: Sign up ────────────────────────────────────────────────
-        if "user_registered" not in st.session_state:
-            st.session_state.user_registered = False
-
-        if not st.session_state.user_registered:
-            st.markdown(
-                """
-                <div style="background:linear-gradient(135deg,#0c0f1a,#0d1020);
-                            border:1px solid rgba(159,122,234,0.2);border-radius:18px;
-                            padding:28px 26px;margin-bottom:0;">
-                  <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:700;
-                              color:#f7fafc;margin-bottom:6px;">Create your account</div>
-                  <div style="font-size:12px;color:#718096;margin-bottom:20px;">
-                    Free to start — no credit card needed</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            name  = st.text_input("Your Name", placeholder="Rahul Sharma", key="reg_name")
-            email = st.text_input("Email Address", placeholder="rahul@gmail.com", key="reg_email")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if st.button("Continue →", use_container_width=True, type="primary", key="reg_btn"):
-                if name.strip() and email.strip() and "@" in email:
-                    st.session_state.user_registered = True
-                    st.session_state.reg_name  = name.strip()
-                    st.session_state.reg_email = email.strip()
-                    st.rerun()
-                else:
-                    st.error("Please enter a valid name and email.")
-            st.stop()
-
-        # ── STEP B: Coupon gate ────────────────────────────────────────────
-        reg_name = st.session_state.get("reg_name", "there")
-
-        if not is_unlocked:
-            st.markdown(
-                f"""
-                <div style="background:linear-gradient(135deg,#0c0f1a,#0d1020);
-                            border:1px solid rgba(99,179,237,0.15);border-radius:18px;
-                            padding:28px 26px;">
-                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-                    <div style="font-size:20px;">👋</div>
-                    <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#f7fafc;">
-                      Welcome, {reg_name.split()[0]}!</div>
-                  </div>
-                  <div style="font-size:12px;color:#718096;margin-bottom:24px;">
-                    Enter your access code to unlock the portfolio analyser.</div>
-
-                  <div style="background:#07090f;border:2px dashed rgba(99,179,237,0.2);
-                              border-radius:14px;padding:28px;text-align:center;margin-bottom:20px;">
-                    <div style="font-size:36px;margin-bottom:8px;">🔒</div>
-                    <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;
-                                color:#f7fafc;margin-bottom:4px;">Upload Locked</div>
-                    <div style="font-size:12px;color:#4a5568;">Enter your coupon code below to unlock</div>
-                  </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            coupon_input = st.text_input(
-                "Access Code",
-                placeholder="CAS360-XXXXXX",
-                key="coupon_field",
-                help="You should have received this code from us",
-            ).strip().upper()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if st.button("🔓 Unlock Access", use_container_width=True, type="primary", key="unlock_btn"):
-                if coupon_input in VALID_COUPONS:
-                    st.session_state.coupon_ok     = True
-                    st.session_state.coupon_used   = coupon_input
-                    st.success(f"✅ Code accepted! Welcome to CAS 360 View, {reg_name.split()[0]}.")
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid code. Please check and try again.")
-
-            st.markdown(
-                """
-                <div style="text-align:center;margin-top:12px;">
-                  <div style="font-size:11px;color:#4a5568;">
-                    Don't have a code? Contact us to get access.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            return  # stop here if not unlocked
-
-        # ── STEP C: Upload (unlocked) ──────────────────────────────────────
-        used_code = st.session_state.get("coupon_used", "")
-        st.markdown(
-            f"""
-            <div style="background:linear-gradient(135deg,#0a1f15,#0c0f1a);
-                        border:1px solid rgba(72,187,120,0.25);border-radius:18px;
-                        padding:28px 26px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-                <div>
-                  <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#f7fafc;">
-                    Upload your CAS PDF</div>
-                  <div style="font-size:11px;color:#48bb78;margin-top:3px;">
-                    🔓 Unlocked with {used_code}</div>
-                </div>
-                <div style="background:rgba(72,187,120,0.12);border:1px solid rgba(72,187,120,0.3);
-                            border-radius:20px;padding:4px 12px;font-size:10px;font-weight:700;
-                            color:#48bb78;letter-spacing:1px;">ACTIVE</div>
-              </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
+    col = st.columns([1, 2, 1])[1]
+    with col:
         uploaded = st.file_uploader("CAS PDF", type=["pdf"], label_visibility="collapsed")
-        password = st.text_input(
-            "PDF Password",
-            type="password",
-            placeholder="PAN number or Date of Birth (DDMMYYYY)",
-            key="pdf_password",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+        password = st.text_input("PDF Password", type="password", placeholder="PAN / Date of Birth")
 
         if uploaded and password:
-            if st.button("🚀 Analyse Portfolio →", use_container_width=True, type="primary"):
-                with st.spinner("Parsing your CAS…"):
+            if st.button("Analyse Portfolio →", use_container_width=True, type="primary"):
+                with st.spinner("Parsing…"):
                     data, error = parse_pdf(uploaded.read(), password)
                 if error == "wrong_password":
                     st.error("Wrong password. Try your PAN number or date of birth (DDMMYYYY).")
                 elif error:
                     st.error(f"Parse error: {error}")
                 else:
-                    portfolio     = process(data)
+                    portfolio = process(data)
                     investor_name = portfolio["investor_name"].title()
                     st.session_state.profiles[investor_name] = portfolio
-                    st.session_state.active   = investor_name
-                    st.session_state.pin_ok   = True
-                    st.success(f"✅ Portfolio loaded — {investor_name}")
+                    st.session_state.active = investor_name
+                    st.session_state.pin_ok = True
+                    st.success(f"Portfolio loaded — {investor_name}")
                     st.rerun()
 
 
