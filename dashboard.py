@@ -609,8 +609,8 @@ def process(raw):
             SIP_TX_KEYS = ["SIP", "SYSTEMATIC", "RECURRING", "AUTO DEBIT", "E-DEBIT", "ECS", "MANDATE"]
 
             for tx in transactions:
-                raw_amount = float(tx.get("amount") or 0.0)
-                raw_units  = float(tx.get("units") or 0.0)
+                raw_amount = float(tx.get("amount", 0.0))
+                raw_units  = float(tx.get("units",  0.0))
                 amount     = abs(raw_amount)
                 txn_type   = str(tx.get("type",        "")).upper()
                 description= str(tx.get("description", "")).upper()
@@ -618,73 +618,77 @@ def process(raw):
                 combined   = txn_type + " " + description
 
                 # ── CLASSIFY ──────────────────────────────────────────────
-                # Reversal / Rejection = negative units OR negative amount
-                # OR explicit keywords for insufficient / failed / bounced
-                is_negative_flow = (raw_units < 0) or (raw_amount < 0)
-                is_reversal_kw   = any(k in combined for k in [
+                # GOLDEN RULE (user-defined):
+                #
+                #   OUTFLOW types  (Redemption, STP Out, Switch Out, SWP):
+                #       negative units  = real transaction happened ✓
+                #       positive units  = it was reversed / rejected ✗
+                #
+                #   INFLOW types   (SIP, Lumpsum Purchase, STP In, Switch In):
+                #       positive units  = real transaction happened ✓
+                #       negative units  = it was reversed / rejected ✗
+                #
+                #   Explicit reversal keywords ALSO force reversal regardless.
+
+                is_reversal_kw = any(k in combined for k in [
                     "REVERSAL", "REVERSED", "REJECTION", "REJECTED",
                     "BOUNCE", "BOUNCED", "INSUFFICIENT", "FAILED",
                     "RETURN", "CANCELLED", "CANCEL",
                 ])
 
-                # STP In/Out
-                is_stp_in  = "STP" in combined and ("IN" in combined or "TRANSFER IN" in combined) and "OUT" not in combined
-                is_stp_out = "STP" in combined and ("OUT" in combined or "TRANSFER OUT" in combined)
-
-                # Switch In/Out
-                is_switch_in  = "SWITCH" in combined and ("IN" in combined) and "OUT" not in combined
-                is_switch_out = "SWITCH" in combined and ("OUT" in combined)
-
-                # SWP
-                is_swp = "SWP" in combined or "SYSTEMATIC WITHDRAWAL" in combined
-
-                # SIP (normal and reversal)
-                is_sip_kw = any(k in combined for k in SIP_TX_KEYS)
-
-                # Redemption / Withdrawal
+                # ── STEP 1: identify BASE transaction type from description ──
+                is_stp_out    = "STP" in combined and ("OUT" in combined or "TRANSFER OUT" in combined)
+                is_stp_in     = "STP" in combined and ("IN"  in combined or "TRANSFER IN"  in combined) and not is_stp_out
+                is_switch_out = "SWITCH" in combined and "OUT" in combined
+                is_switch_in  = "SWITCH" in combined and "IN"  in combined and not is_switch_out
+                is_swp        = "SWP" in combined or "SYSTEMATIC WITHDRAWAL" in combined
+                is_sip_kw     = any(k in combined for k in SIP_TX_KEYS)
                 is_redemption = any(k in combined for k in ["REDEMPTION", "PAYOUT", "WITHDRAWAL"]) and not is_swp
+                is_purchase   = any(k in combined for k in ["PURCHASE", "LUMPSUM", "NFO", "NEW FUND", "REINVEST", "DIVIDEND REINVEST"])
 
-                # Purchase / Lumpsum
-                is_purchase = any(k in combined for k in ["PURCHASE", "LUMPSUM", "NFO", "NEW FUND", "REINVEST", "DIVIDEND REINVEST"])
-
-                # ── REVERSAL / REJECTION OVERRIDE ─────────────────────────
-                # If negative units/amount or reversal keyword → it's always
-                # a reversal regardless of other flags. Determine parent type.
-                if is_negative_flow or is_reversal_kw:
-                    if is_sip_kw:
-                        tx_class = "SIP Reversal"
-                    elif is_stp_in:
-                        tx_class = "STP In Reversal"
-                    elif is_stp_out:
-                        tx_class = "STP Out Reversal"
-                    elif is_switch_in:
-                        tx_class = "Switch In Reversal"
-                    elif is_switch_out:
-                        tx_class = "Switch Out Reversal"
-                    elif is_swp:
-                        tx_class = "SWP Reversal"
-                    elif is_redemption:
-                        tx_class = "Redemption Reversal"
-                    else:
-                        tx_class = "Reversal / Rejection"
+                # Priority order matters — most specific first
+                if is_stp_out:
+                    base = "STP Out"
                 elif is_stp_in:
-                    tx_class = "STP In"
-                elif is_stp_out:
-                    tx_class = "STP Out"
-                elif is_switch_in:
-                    tx_class = "Switch In"
+                    base = "STP In"
                 elif is_switch_out:
-                    tx_class = "Switch Out"
+                    base = "Switch Out"
+                elif is_switch_in:
+                    base = "Switch In"
                 elif is_swp:
-                    tx_class = "SWP"
-                elif is_sip_kw and not is_purchase:
-                    tx_class = "SIP"
+                    base = "SWP"
                 elif is_redemption:
-                    tx_class = "Redemption"
+                    base = "Redemption"
+                elif is_sip_kw:
+                    base = "SIP"          # SIP wins over purchase if SIP keyword present
                 elif is_purchase:
-                    tx_class = "Lumpsum Purchase"
+                    base = "Lumpsum Purchase"
                 else:
-                    tx_class = "Other"
+                    base = "Other"
+
+                # ── STEP 2: apply golden rule to decide if this is a reversal ─
+                OUTFLOW_BASES = {"Redemption", "STP Out", "Switch Out", "SWP"}
+                INFLOW_BASES  = {"SIP", "Lumpsum Purchase", "STP In", "Switch In"}
+
+                if base in OUTFLOW_BASES:
+                    # Outflow: units normally go NEGATIVE when it actually happens.
+                    # So POSITIVE units on an outflow = reversed / rejected.
+                    is_reversal = (raw_units > 0) or is_reversal_kw
+                elif base in INFLOW_BASES:
+                    # Inflow: units normally go POSITIVE when it actually happens.
+                    # So NEGATIVE units on an inflow = reversed / rejected.
+                    is_reversal = (raw_units < 0) or is_reversal_kw
+                else:
+                    # "Other" — rely only on explicit keywords
+                    is_reversal = is_reversal_kw
+
+                # ── STEP 3: assign final tx_class ─────────────────────────────
+                if is_reversal and base != "Other":
+                    tx_class = base + " Reversal"
+                elif is_reversal and base == "Other":
+                    tx_class = "Reversal / Rejection"
+                else:
+                    tx_class = base
 
                 # ── INFLOW OUTFLOW ACCOUNTING ──────────────────────────────
                 # Reversals of buy-type transactions → subtract from invested
