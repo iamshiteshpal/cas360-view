@@ -609,8 +609,8 @@ def process(raw):
             SIP_TX_KEYS = ["SIP", "SYSTEMATIC", "RECURRING", "AUTO DEBIT", "E-DEBIT", "ECS", "MANDATE"]
 
             for tx in transactions:
-                raw_amount = float(tx.get("amount", 0.0))
-                raw_units  = float(tx.get("units",  0.0))
+                raw_amount = float(tx.get("amount") or 0.0)
+                raw_units  = float(tx.get("units") or 0.0)
                 amount     = abs(raw_amount)
                 txn_type   = str(tx.get("type",        "")).upper()
                 description= str(tx.get("description", "")).upper()
