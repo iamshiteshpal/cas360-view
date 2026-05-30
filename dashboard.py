@@ -1271,7 +1271,7 @@ def render_dashboard(data):
             f"<div style='font-size:10px;color:#63b3ed;font-family:IBM Plex Mono,monospace;'>● SIP {sip_pct:.1f}%</div>"
             f"<div style='font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;'>Lump Sum {lump_pct:.1f}% ●</div></div></div>"
         )
-        components.html(split_html, height=185, scrolling=False)
+        st.markdown(split_html, unsafe_allow_html=True)
 
         # ── WEALTH CHART ─────────────────────────────────────────────────────
         ch, al = st.columns([3, 2])
@@ -1592,7 +1592,7 @@ def render_dashboard(data):
             f"<div style='font-size:10px;color:{h_color};font-weight:700;'>{h_label}</div></div>"
             f"</div></div></div>"
         )
-        components.html(hero, height=140, scrolling=False)
+        st.markdown(hero, unsafe_allow_html=True)
 
         # ── ROW 1: Animated SVG Donut + Animated Radial Bars ─────────────────
         col_d, col_b = st.columns(2)
@@ -1658,7 +1658,7 @@ def render_dashboard(data):
                 f"animation:cFade 1s 1s forwards;opacity:0;'>hover to inspect</text>"
                 f"</svg><div style='flex:1;'>{leg}</div></div></div>"
             )
-            components.html(donut_html, height=300, scrolling=False)
+            components.html(donut_html, height=310, scrolling=False)
 
         with col_b:
             # Animated radial bars with % labels
@@ -1837,7 +1837,7 @@ def render_dashboard(data):
             f"<div class='lhs'>{fmt_inr(total_redeemed)} of {fmt_inr(total_ls)} taken out</div></div>"
             "</div>"
         )
-        components.html(lhero, height=140, scrolling=False)
+        st.markdown(lhero, unsafe_allow_html=True)
 
         # ── Redemption rate visual gauge ──────────────────────────────────────
         gauge_w = min(redemption_rate, 100)
@@ -1916,7 +1916,7 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#9f7aea;animation:icF 1s .8s forwards;opacity:0;'>{len(ls_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_i}</div></div></div>"
                 )
-                components.html(inv_html, height=250, scrolling=False)
+                components.html(inv_html, height=260, scrolling=False)
 
         with dc2:
             if red_by_scheme:
@@ -1934,7 +1934,7 @@ def render_dashboard(data):
                     f"<text x='95' y='106' text-anchor='middle' style='font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:700;fill:#fc8181;animation:rcF 1s .8s forwards;opacity:0;'>{len(red_by_scheme)}</text>"
                     f"</svg><div style='flex:1;'>{leg_r}</div></div></div>"
                 )
-                components.html(red_html, height=250, scrolling=False)
+                components.html(red_html, height=260, scrolling=False)
             else:
                 st.markdown(
                     '<div style="background:rgba(72,187,120,0.06);border:1px solid rgba(72,187,120,0.2);'
@@ -1950,33 +1950,51 @@ def render_dashboard(data):
         _dash_section("📋 Scheme-wise Capital Breakdown")
         all_schemes_l = sorted(set(list(ls_by_scheme.keys()) + list(red_by_scheme.keys())))
         for scheme in sorted(all_schemes_l, key=lambda s: ls_by_scheme.get(s, 0), reverse=True):
-            inv_a  = ls_by_scheme.get(scheme, 0)
-            red_a  = red_by_scheme.get(scheme, 0)
-            net_a  = inv_a - red_a
-            nc     = "#48bb78" if net_a >= 0 else "#fc8181"
-            red_pct= (red_a / inv_a * 100) if inv_a else 0
-            status = "FULLY REDEEMED" if inv_a > 0 and red_a >= inv_a * 0.99 else ("PARTIALLY OUT" if red_a > 0 else "HOLDING")
-            sc     = {"FULLY REDEEMED": "#fc8181", "PARTIALLY OUT": "#f6ad55", "HOLDING": "#48bb78"}[status]
+            inv_a   = ls_by_scheme.get(scheme, 0)
+            red_a   = red_by_scheme.get(scheme, 0)
+            net_a   = inv_a - red_a          # positive = still in, negative = over-redeemed
+            pnl_a   = red_a - inv_a          # actual profit/loss from exits (positive = profit)
+            nc      = "#48bb78" if net_a >= 0 else "#fc8181"
+            pnl_c   = "#48bb78" if pnl_a >= 0 else "#fc8181"
+            red_pct = min((red_a / inv_a * 100) if inv_a else 0, 100)
+            remain  = max(100 - red_pct, 0)
+            status  = "FULLY REDEEMED" if inv_a > 0 and red_a >= inv_a * 0.99 else ("PARTIALLY OUT" if red_a > 0 else "HOLDING")
+            sc      = {"FULLY REDEEMED": "#fc8181", "PARTIALLY OUT": "#f6ad55", "HOLDING": "#48bb78"}[status]
+            net_label = "Still Invested" if net_a >= 0 else "Over-Redeemed"
+            pnl_label = "Profit Booked" if pnl_a >= 0 else "Loss on Exit"
             st.markdown(
-                f'<div style="background:linear-gradient(135deg,#0c0f1a,#111627);"'
-                f'border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:16px 20px;margin-bottom:10px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-                f'<div style="font-size:13px;color:#f7fafc;font-weight:600;">{clean_name(scheme)}</div>'
-                f'<span style="background:{sc}18;border:1px solid {sc}44;color:{sc};font-size:9px;font-weight:700;"'
-                f'padding:3px 9px;border-radius:20px;">{status}</span></div>'
-                f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:12px;">'
-                f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Invested</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#9f7aea;">{fmt_inr(inv_a)}</div></div>'
-                f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Redeemed</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#fc8181;">{fmt_inr(red_a) if red_a else "—"}</div></div>'
-                f'<div><div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Net Position</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:{nc};">{"▲" if net_a>=0 else "▼"} {fmt_inr(abs(net_a))}</div></div></div>'
-                f'<div style="background:#0a0d14;border-radius:6px;height:8px;overflow:hidden;">'
-                f'<div style="height:100%;width:{100-red_pct:.1f}%;background:linear-gradient(90deg,#9f7aea88,#9f7aea);"'
-                f'border-radius:6px;"></div></div>'
-                f'<div style="display:flex;justify-content:space-between;margin-top:4px;">'
-                f'<span style="font-size:9px;color:#9f7aea;">● Remaining {100-red_pct:.0f}%</span>'
-                f'<span style="font-size:9px;color:#fc8181;">Redeemed {red_pct:.0f}% ●</span></div></div>',
+                f'<div style="background:#0c0f1a;border:1px solid rgba(255,255,255,0.08);'
+                f'border-radius:16px;padding:22px 26px;margin-bottom:14px;">'
+                # Header row
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">'
+                f'<div style="font-size:14px;color:#f7fafc;font-weight:700;line-height:1.3;">{clean_name(scheme)}</div>'
+                f'<span style="background:{sc}1a;border:1px solid {sc}55;color:{sc};'
+                f'font-size:9px;font-weight:800;padding:4px 10px;border-radius:20px;'
+                f'letter-spacing:1px;white-space:nowrap;margin-left:12px;">{status}</span></div>'
+                # 4-column stats grid
+                f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:18px;">'
+                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">💜 Invested</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:#9f7aea;">{fmt_inr(inv_a)}</div></div>'
+                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">❤️ Redeemed</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:#fc8181;">{fmt_inr(red_a) if red_a else "—"}</div></div>'
+                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">🏦 {net_label}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:{nc};">'
+                f'{"▲" if net_a>=0 else "▼"} {fmt_inr(abs(net_a))}</div></div>'
+                f'<div style="background:#111627;border-radius:10px;padding:12px 14px;">'
+                f'<div style="font-size:9px;color:#718096;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">📈 {pnl_label}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:15px;font-weight:700;color:{pnl_c};">'
+                f'{"▲" if pnl_a>=0 else "▼"} {fmt_inr(abs(pnl_a)) if red_a else "—"}</div></div></div>'
+                # Progress bar
+                f'<div style="background:#0a0d14;border-radius:8px;height:10px;overflow:hidden;margin-bottom:6px;">'
+                f'<div style="height:100%;width:{remain:.1f}%;background:linear-gradient(90deg,#9f7aea66,#9f7aea);'
+                f'border-radius:8px;"></div></div>'
+                f'<div style="display:flex;justify-content:space-between;">'
+                f'<span style="font-size:10px;color:#9f7aea;font-family:IBM Plex Mono,monospace;">● Remaining {remain:.0f}%</span>'
+                f'<span style="font-size:10px;color:#fc8181;font-family:IBM Plex Mono,monospace;">Redeemed {red_pct:.0f}% ●</span>'
+                f'</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -2022,7 +2040,7 @@ def render_dashboard(data):
             f"<div class='swl'>Total Moved</div><div class='swv' style='color:#63b3ed;'>{fmt_inr(total_moved)}</div>"
             f"<div class='sws'>STP + Switch combined</div></div></div>"
         )
-        components.html(sw_kpi, height=110, scrolling=False)
+        st.markdown(sw_kpi, unsafe_allow_html=True)
 
         # ── STP Flow: animated arrow diagram ─────────────────────────────────
         if stp_out_txs or stp_in_txs:
@@ -2171,7 +2189,7 @@ def render_dashboard(data):
             f"<div class='rv' style='color:{pnl_color};'>{'▲' if total_realized_pnl>=0 else '▼'} {fmt_inr(total_realized_pnl)}</div>"
             f"<div class='rs'>Fully exited positions</div></div></div>"
         )
-        components.html(rkpi, height=110, scrolling=False)
+        st.markdown(rkpi, unsafe_allow_html=True)
 
         # ── Animated donut: redemption by scheme + returns chart ─────────────
         red_by_scheme = {}
