@@ -152,6 +152,25 @@ def inject_global_styles():
         .alloc-dot { width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px; }
         .alert-card { border-left: 3px solid; border-radius: 0 10px 10px 0; padding: 12px 16px; margin-bottom: 10px; background: var(--bg2); }
         div[data-testid="stAppViewBlockContainer"] { padding-top: 2.5rem !important; }
+
+        /* ── Hide Streamlit default toolbar (Share, GitHub, pencil, star) ── */
+        #MainMenu { visibility: hidden !important; display: none !important; }
+        header[data-testid="stHeader"] { visibility: hidden !important; height: 0 !important; }
+        [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+        [data-testid="stDecoration"] { display: none !important; }
+        [data-testid="stStatusWidget"] { display: none !important; }
+        footer { visibility: hidden !important; display: none !important; }
+        /* Hide keyboard shortcut tooltip */
+        [data-testid="stTooltipHoverTarget"] { display: none !important; }
+        .stDeployButton { display: none !important; }
+        /* Hide the leaked "nav" radio label */
+        [data-testid="stSidebar"] [data-testid="stRadio"] > label:first-child {
+            display: none !important;
+        }
+        /* Hide keyboard shortcut overlay completely */
+        [data-testid="stShortcuts"] { display: none !important; }
+        div[class*="shortcut"] { display: none !important; }
+        .keyboard_doub { display: none !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -912,6 +931,10 @@ def initialize_session_state():
         "reg_name": "",
         "reg_email": "",
         "view_family": False,
+        "cas_requested": False,
+        "cas_ref_no": "",
+        "cas_req_email": "",
+        "cas_req_pwd": "",
         "rtype": "standard",
         "rsections": {"overall_summary","holdings","sip_details","unrealised_pnl","realised_pnl"},
     }
@@ -1046,6 +1069,93 @@ def setup_sheet_headers():
             ).execute()
     except Exception:
         pass
+
+
+# ─────────────────────────────────────────────
+# AUTO CAS REQUEST — CAMS
+# ─────────────────────────────────────────────
+
+def _request_cas_from_cams(email: str, password: str) -> str:
+    """
+    Submit CAS request to CAMS on behalf of client.
+    Returns reference number (e.g. CP213107356) on success, or "ERROR".
+    Settings: Detailed, 01-Jan-1991 to today, with zero balance folios.
+    """
+    import datetime as _dt
+    import re as _re
+
+    today    = _dt.date.today().strftime("%d-%b-%Y")   # e.g. 31-May-2026
+    from_dt  = "01-Jan-1991"
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.camsonline.com/",
+        "Origin":  "https://www.camsonline.com",
+    })
+
+    try:
+        # Step 1 — Load the form page to get any hidden tokens/cookies
+        page = session.get(
+            "https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement",
+            timeout=15,
+        )
+        if page.status_code != 200:
+            return "ERROR"
+
+        # Step 2 — Extract hidden CSRF / viewstate tokens if present
+        hidden = {}
+        for inp in _re.findall(r"<input[^>]+>", page.text, _re.I):
+            name_m  = _re.search(r"name=[^>]+", inp, _re.I)
+            value_m = _re.search(r"value=[^>]+", inp, _re.I)
+            # value extracted above
+            if name_m:
+                hidden[name_m.group(1)] = value_m.group(1) if value_m else ""
+
+        # Step 3 — Build the POST payload
+        payload = {
+            **hidden,
+            "statementType":     "D",           # Detailed
+            "period":            "S",            # Specific period
+            "fromDate":          from_dt,
+            "toDate":            today,
+            "folioListing":      "Z",            # With zero balance folios
+            "email":             email,
+            "pan":               "",
+            "password":          password,
+            "confirmPassword":   password,
+        }
+
+        # Step 4 — Submit
+        resp = session.post(
+            "https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement",
+            data=payload,
+            timeout=20,
+        )
+
+        # Step 5 — Extract reference number from response
+        # CAMS shows: "Your reference number is CP213107356"
+        ref_match = _re.search(r"reference.{0,20}([A-Z]{2}[0-9]{7,12})", resp.text, _re.I)
+        if ref_match:
+            return ref_match.group(1).upper()
+
+        # Also try just the pattern CP/CK followed by digits
+        ref_match2 = _re.search(r'(CP\d{7,12}|CK\d{7,12})', resp.text, _re.I)
+        if ref_match2:
+            return ref_match2.group(1).upper()
+
+        # If success page is shown but no ref number found
+        if "success" in resp.text.lower() or "will be sent" in resp.text.lower():
+            return "SUCCESS"
+
+        return "ERROR"
+
+    except Exception:
+        return "ERROR"
 
 
 # ─────────────────────────────────────────────
@@ -1349,53 +1459,203 @@ def show_upload():
             )
             return  # stop here if not unlocked
 
-        # ── STEP C: Upload (unlocked) ──────────────────────────────────────
+        # ── STEP C: Auto-request OR Upload (unlocked) ─────────────────────
         used_code = st.session_state.get("coupon_used", "")
+
+        # Header
         st.markdown(
             f"""
-            <div style="background:linear-gradient(135deg,#0a1f15,#0c0f1a);
-                        border:1px solid rgba(72,187,120,0.25);border-radius:18px;
-                        padding:28px 26px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-                <div>
-                  <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#f7fafc;">
-                    Upload your CAS PDF</div>
-                  <div style="font-size:11px;color:#48bb78;margin-top:3px;">
-                    🔓 Unlocked with {used_code}</div>
-                </div>
-                <div style="background:rgba(72,187,120,0.12);border:1px solid rgba(72,187,120,0.3);
-                            border-radius:20px;padding:4px 12px;font-size:10px;font-weight:700;
-                            color:#48bb78;letter-spacing:1px;">ACTIVE</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;
+                        margin-bottom:16px;">
+              <div>
+                <div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:800;
+                            color:#f7fafc;">Get your CAS PDF</div>
+                <div style="font-size:11px;color:#48bb78;margin-top:3px;">
+                  🔓 Unlocked · {used_code}</div>
               </div>
+              <div style="background:rgba(72,187,120,0.12);border:1px solid rgba(72,187,120,0.3);
+                          border-radius:20px;padding:4px 12px;font-size:10px;font-weight:700;
+                          color:#48bb78;letter-spacing:1px;">ACTIVE</div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
 
-        uploaded = st.file_uploader("CAS PDF", type=["pdf"], label_visibility="collapsed")
-        password = st.text_input(
-            "PDF Password",
-            type="password",
-            placeholder="PAN number or Date of Birth (DDMMYYYY)",
-            key="pdf_password",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+        # ── Mode tabs ──────────────────────────────────────────────────────
+        tab_auto, tab_upload = st.tabs(["📬 Request CAS Automatically", "📁 Upload PDF Manually"])
 
-        if uploaded and password:
-            if st.button("🚀 Analyse Portfolio →", use_container_width=True, type="primary"):
-                with st.spinner("Parsing your CAS…"):
-                    data, error = parse_pdf(uploaded.read(), password)
-                if error == "wrong_password":
-                    st.error("Wrong password. Try your PAN number or date of birth (DDMMYYYY).")
-                elif error:
-                    st.error(f"Parse error: {error}")
-                else:
-                    portfolio     = process(data)
-                    investor_name = portfolio["investor_name"].title()
-                    st.session_state.profiles[investor_name] = portfolio
-                    st.session_state.active   = investor_name
-                    st.session_state.pin_ok   = True
-                    st.success(f"✅ Portfolio loaded — {investor_name}")
+        # ════════════════════════════════════════════
+        # TAB 1 — AUTO REQUEST
+        # ════════════════════════════════════════════
+        with tab_auto:
+
+            # Show success screen if already requested
+            if st.session_state.get("cas_requested"):
+                ref_no   = st.session_state.get("cas_ref_no", "—")
+                req_email= st.session_state.get("cas_req_email", "")
+                st.markdown(
+                    f"""
+                    <div style="background:linear-gradient(135deg,#0a1f15,#0c0f1a);
+                                border:1px solid rgba(72,187,120,0.3);border-radius:16px;
+                                padding:24px;text-align:center;margin-bottom:16px;">
+                      <div style="font-size:40px;margin-bottom:10px;">✅</div>
+                      <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;
+                                  color:#48bb78;margin-bottom:6px;">CAS Request Sent!</div>
+                      <div style="font-size:12px;color:#718096;">
+                        PDF will arrive at <b style="color:#f7fafc;">{req_email}</b> within 2 minutes</div>
+                    </div>
+                    <div style="background:#0c0f1a;border:1px solid rgba(99,179,237,0.2);
+                                border-radius:14px;padding:16px 20px;margin-bottom:14px;">
+                      <div style="font-size:10px;color:#718096;text-transform:uppercase;
+                                  letter-spacing:1.2px;margin-bottom:8px;">Reference Number</div>
+                      <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;
+                                    font-weight:700;color:#63b3ed;letter-spacing:2px;">{ref_no}</div>
+                        <div style="font-size:10px;color:#4a5568;">Save this number</div>
+                      </div>
+                    </div>
+                    <div style="background:#0c0f1a;border:1px solid rgba(255,255,255,0.06);
+                                border-radius:14px;padding:14px 18px;margin-bottom:14px;">
+                      <div style="font-size:12px;font-weight:700;color:#f7fafc;margin-bottom:10px;">
+                        What to do next:</div>
+                      <div style="display:flex;gap:10px;margin-bottom:8px;">
+                        <div style="width:22px;height:22px;border-radius:50%;
+                                    background:rgba(99,179,237,0.15);display:flex;align-items:center;
+                                    justify-content:center;font-size:10px;font-weight:700;
+                                    color:#63b3ed;flex-shrink:0;">1</div>
+                        <div style="font-size:12px;color:#718096;">
+                          Check your inbox for the PDF from CAMS</div>
+                      </div>
+                      <div style="display:flex;gap:10px;margin-bottom:8px;">
+                        <div style="width:22px;height:22px;border-radius:50%;
+                                    background:rgba(99,179,237,0.15);display:flex;align-items:center;
+                                    justify-content:center;font-size:10px;font-weight:700;
+                                    color:#63b3ed;flex-shrink:0;">2</div>
+                        <div style="font-size:12px;color:#718096;">
+                          Click the <b style="color:#f7fafc;">"Upload PDF Manually"</b> tab above</div>
+                      </div>
+                      <div style="display:flex;gap:10px;">
+                        <div style="width:22px;height:22px;border-radius:50%;
+                                    background:rgba(99,179,237,0.15);display:flex;align-items:center;
+                                    justify-content:center;font-size:10px;font-weight:700;
+                                    color:#63b3ed;flex-shrink:0;">3</div>
+                        <div style="font-size:12px;color:#718096;">
+                          Upload PDF · enter the password you just set · done!</div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("🔄 Request another CAS", use_container_width=True):
+                    st.session_state.cas_requested = False
                     st.rerun()
+
+            else:
+                # ── Request form ───────────────────────────────────────────
+                st.markdown(
+                    """
+                    <div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.15);
+                                border-radius:12px;padding:12px 16px;margin-bottom:16px;
+                                display:flex;gap:10px;align-items:flex-start;">
+                      <div style="font-size:18px;flex-shrink:0;">📬</div>
+                      <div style="font-size:12px;color:#718096;line-height:1.7;">
+                        We'll request your CAS from CAMS automatically —
+                        <b style="color:#f7fafc;">Detailed</b> · from
+                        <b style="color:#f7fafc;">01 Jan 1991</b> to today ·
+                        with <b style="color:#f7fafc;">zero balance folios</b>.
+                        PDF arrives in your inbox within 2 minutes.
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                cas_email = st.text_input(
+                    "Your email address",
+                    placeholder="rahul@gmail.com",
+                    key="_cas_email",
+                    help="CAMS will send the PDF to this email",
+                )
+                cas_pwd = st.text_input(
+                    "Set a password for the PDF",
+                    placeholder="e.g. Rahul@1234",
+                    key="_cas_pwd",
+                    help="You will need this password to open the PDF",
+                )
+                cas_pwd2 = st.text_input(
+                    "Confirm password",
+                    placeholder="Re-enter same password",
+                    key="_cas_pwd2",
+                )
+
+                st.markdown(
+                    """
+                    <div style="font-size:10px;color:#4a5568;margin:8px 0 12px;
+                                display:flex;align-items:center;gap:6px;">
+                      🔐 Your email and password go directly to CAMS — we never store them
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                if st.button("📬 Send my CAS Request →",
+                             use_container_width=True, type="primary", key="cas_req_btn"):
+                    if not cas_email or "@" not in cas_email:
+                        st.error("Please enter a valid email address.")
+                    elif not cas_pwd:
+                        st.error("Please set a password for the PDF.")
+                    elif cas_pwd != cas_pwd2:
+                        st.error("Passwords do not match. Please try again.")
+                    else:
+                        with st.spinner("Sending your CAS request to CAMS..."):
+                            ref_no = _request_cas_from_cams(cas_email, cas_pwd)
+                        if ref_no and ref_no != "ERROR":
+                            st.session_state["cas_requested"]  = True
+                            st.session_state["cas_ref_no"]     = ref_no
+                            st.session_state["cas_req_email"]  = cas_email
+                            st.session_state["cas_req_pwd"]    = cas_pwd
+                            st.rerun()
+                        else:
+                            st.error(
+                                "Could not submit to CAMS automatically. "
+                                "Please use the 'Upload PDF Manually' tab and follow the steps on the left."
+                            )
+
+        # ════════════════════════════════════════════
+        # TAB 2 — MANUAL UPLOAD
+        # ════════════════════════════════════════════
+        with tab_upload:
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+            # Pre-fill password hint if they used auto-request
+            pwd_hint = st.session_state.get("cas_req_pwd", "")
+            pwd_placeholder = f"Password you set: {pwd_hint}" if pwd_hint else "PAN number or password you set"
+
+            uploaded = st.file_uploader(
+                "CAS PDF", type=["pdf"], label_visibility="collapsed")
+            password = st.text_input(
+                "PDF Password",
+                type="password",
+                placeholder=pwd_placeholder,
+                key="pdf_password",
+            )
+            if uploaded and password:
+                if st.button("🚀 Analyse Portfolio →",
+                             use_container_width=True, type="primary"):
+                    with st.spinner("Parsing your CAS…"):
+                        data, error = parse_pdf(uploaded.read(), password)
+                    if error == "wrong_password":
+                        st.error("Wrong password. Try the password you set, your PAN, or date of birth.")
+                    elif error:
+                        st.error(f"Parse error: {error}")
+                    else:
+                        portfolio     = process(data)
+                        investor_name = portfolio["investor_name"].title()
+                        st.session_state.profiles[investor_name] = portfolio
+                        st.session_state.active  = investor_name
+                        st.session_state.pin_ok  = True
+                        st.success(f"✅ Portfolio loaded — {investor_name}")
+                        st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -1496,7 +1756,7 @@ def build_sidebar(data):
             if profiles_count > 1:
                 nav_items = ["👨‍👩‍👧‍👦 Family"] + nav_items
 
-            menu = st.radio("nav", nav_items, label_visibility="collapsed")
+            menu = st.radio("", nav_items, label_visibility="hidden")
 
             # ── Divider ───────────────────────────────────────────────────
             st.markdown(
