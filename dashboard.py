@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
@@ -152,6 +152,17 @@ def inject_global_styles():
         .alloc-dot { width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px; }
         .alert-card { border-left: 3px solid; border-radius: 0 10px 10px 0; padding: 12px 16px; margin-bottom: 10px; background: var(--bg2); }
         div[data-testid="stAppViewBlockContainer"] { padding-top: 2.5rem !important; }
+
+        /* ── Hide Streamlit default toolbar (Share, GitHub, pencil, star) ── */
+        #MainMenu { visibility: hidden !important; display: none !important; }
+        header[data-testid="stHeader"] { visibility: hidden !important; height: 0 !important; }
+        [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+        [data-testid="stDecoration"] { display: none !important; }
+        [data-testid="stStatusWidget"] { display: none !important; }
+        footer { visibility: hidden !important; display: none !important; }
+        /* Hide keyboard shortcut tooltip */
+        [data-testid="stTooltipHoverTarget"] { display: none !important; }
+        .stDeployButton { display: none !important; }
         </style>
         """,
         unsafe_allow_html=True,
