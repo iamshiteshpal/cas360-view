@@ -4,3 +4,4 @@ plotly
 casparser
 pyxirr
 xlsxwriter
+playwright
